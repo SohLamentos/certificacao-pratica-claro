@@ -1,23 +1,39 @@
 import { initDb, Env } from './_db';
 
-export const onRequestGet: PagesFunction<Env> = async ({ env }) => {
-  await initDb(env.DB);
-  const { results } = await env.DB.prepare("SELECT * FROM itens ORDER BY ordem ASC").all();
-  const mapped = results.map((row: any) => ({
-    ...row,
-    critico: row.critico === 1,
-    obrigatorio: row.obrigatorio === 1,
-    ativo: row.ativo === 1
-  }));
-  return Response.json(mapped);
+export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
+  try {
+    await initDb(env.DB);
+    const { results } = await env.DB.prepare(
+      "SELECT * FROM itens ORDER BY ordem ASC"
+    ).all();
+
+    const mapped = results.map((row: any) => ({
+      id: row.id,
+      certificacao: row.certificacao_id,
+      grupo: row.grupo_id,
+      ordem: row.ordem,
+      descricao: row.descricao,
+      critico: row.critico === 1,
+      obrigatorio: row.obrigatorio === 1,
+      ativo: row.ativo === 1
+    }));
+
+    return Response.json(mapped);
+  } catch (error) {
+    return Response.json({
+      success: false,
+      error: String(error),
+      route: request.url
+    }, { status: 500 });
+  }
 };
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
-  await initDb(env.DB);
   try {
+    await initDb(env.DB);
     const data = await request.json() as any;
     await env.DB.prepare(
-      "INSERT INTO itens (id, certificacao, grupo, ordem, descricao, critico, obrigatorio, ativo) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO itens (id, certificacao_id, grupo_id, ordem, descricao, critico, obrigatorio, ativo) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
     ).bind(
       data.id,
       data.certificacao,
@@ -30,7 +46,11 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     ).run();
 
     return Response.json({ success: true });
-  } catch (err: any) {
-    return Response.json({ error: err.message }, { status: 400 });
+  } catch (error) {
+    return Response.json({
+      success: false,
+      error: String(error),
+      route: request.url
+    }, { status: 500 });
   }
 };

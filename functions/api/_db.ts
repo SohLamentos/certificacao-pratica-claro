@@ -3,13 +3,13 @@ export interface Env {
 }
 
 export async function initDb(db: D1Database) {
-  // Create tables if they don't exist
+  // Create tables using snake_case as requested
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS certificacoes (
       id TEXT PRIMARY KEY,
       nome TEXT NOT NULL,
       descricao TEXT,
-      perfilPermitido TEXT NOT NULL,
+      perfil_permitido TEXT NOT NULL,
       cor TEXT,
       icone TEXT,
       ativa INTEGER NOT NULL DEFAULT 1
@@ -17,10 +17,18 @@ export async function initDb(db: D1Database) {
   `).run();
 
   await db.prepare(`
+    CREATE TABLE IF NOT EXISTS grupos (
+      id TEXT PRIMARY KEY,
+      nome TEXT NOT NULL,
+      certificacao_id TEXT NOT NULL
+    )
+  `).run();
+
+  await db.prepare(`
     CREATE TABLE IF NOT EXISTS itens (
       id INTEGER PRIMARY KEY,
-      certificacao TEXT NOT NULL,
-      grupo TEXT NOT NULL,
+      certificacao_id TEXT NOT NULL,
+      grupo_id TEXT NOT NULL,
       ordem INTEGER NOT NULL,
       descricao TEXT NOT NULL,
       critico INTEGER NOT NULL DEFAULT 0,
@@ -30,38 +38,61 @@ export async function initDb(db: D1Database) {
   `).run();
 
   await db.prepare(`
-    CREATE TABLE IF NOT EXISTS avaliacoes (
+    CREATE TABLE IF NOT EXISTS avaliadores (
       id TEXT PRIMARY KEY,
-      nomeTecnico TEXT NOT NULL,
-      matricula TEXT NOT NULL,
-      empresa TEXT NOT NULL,
-      cidadeBase TEXT NOT NULL,
-      nomeCQ TEXT NOT NULL,
-      data TEXT NOT NULL,
-      tipoCertificacao TEXT NOT NULL,
+      nome TEXT NOT NULL,
+      perfil TEXT NOT NULL,
+      cidade_base TEXT NOT NULL,
       status TEXT NOT NULL,
-      checklistResponses TEXT NOT NULL,
-      resultado TEXT,
-      observacao TEXT,
-      notaTeorica REAL,
-      createdAt TEXT NOT NULL,
-      updatedAt TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     )
   `).run();
 
   await db.prepare(`
-    CREATE TABLE IF NOT EXISTS cqs (
+    CREATE TABLE IF NOT EXISTS tecnicos (
       id TEXT PRIMARY KEY,
       nome TEXT NOT NULL,
-      perfil TEXT NOT NULL,
-      cidadeBase TEXT NOT NULL,
-      status TEXT NOT NULL,
-      createdAt TEXT NOT NULL,
-      updatedAt TEXT NOT NULL
+      matricula TEXT NOT NULL,
+      empresa TEXT NOT NULL,
+      cidade_base TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     )
   `).run();
 
-  // Check if certificacoes table is empty
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS avaliacoes (
+      id TEXT PRIMARY KEY,
+      tecnico_id TEXT,
+      nome_tecnico TEXT NOT NULL,
+      matricula TEXT NOT NULL,
+      empresa TEXT NOT NULL,
+      cidade_base TEXT NOT NULL,
+      avaliador_id TEXT,
+      nome_cq TEXT NOT NULL,
+      data TEXT NOT NULL,
+      certificacao_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      resultado TEXT,
+      observacao TEXT,
+      nota_teorica REAL,
+      nota_pratica REAL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `).run();
+
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS respostas (
+      id TEXT PRIMARY KEY,
+      avaliacao_id TEXT NOT NULL,
+      item_id INTEGER NOT NULL,
+      resposta TEXT NOT NULL
+    )
+  `).run();
+
+  // Seed certificacoes if empty
   const certCountRes = await db.prepare("SELECT COUNT(*) as count FROM certificacoes").first();
   const certCount = (certCountRes as any)?.count || 0;
   if (certCount === 0) {
@@ -70,7 +101,7 @@ export async function initDb(db: D1Database) {
         id: 'gpon-veterano',
         nome: 'GPON Veterano',
         descricao: 'Avaliação prática periódica para técnicos veteranos em tecnologia de fibra óptica GPON.',
-        perfilPermitido: 'Apenas CQ',
+        perfil_permitido: 'Apenas CQ',
         cor: '#E30613',
         icone: 'Cpu',
         ativa: 1
@@ -79,7 +110,7 @@ export async function initDb(db: D1Database) {
         id: 'gpon-capacitacao',
         nome: 'GPON Capacitação',
         descricao: 'Auditoria de capacitação técnica inicial para novos técnicos em rede óptica GPON.',
-        perfilPermitido: 'Apenas Analista',
+        perfil_permitido: 'Apenas Analista',
         cor: '#FFB800',
         icone: 'Wifi',
         ativa: 1
@@ -88,7 +119,7 @@ export async function initDb(db: D1Database) {
         id: 'hfc-capacitacao',
         nome: 'HFC Capacitação',
         descricao: 'Auditoria de padrões e conformidades para redes coaxiais (HFC) e decodificadores.',
-        perfilPermitido: 'CQ ou Analista',
+        perfil_permitido: 'CQ ou Analista',
         cor: '#00A859',
         icone: 'Tv',
         ativa: 1
@@ -97,58 +128,120 @@ export async function initDb(db: D1Database) {
 
     for (const cert of defaultCerts) {
       await db.prepare(
-        "INSERT INTO certificacoes (id, nome, descricao, perfilPermitido, cor, icone, ativa) VALUES (?, ?, ?, ?, ?, ?, ?)"
-      ).bind(cert.id, cert.nome, cert.descricao, cert.perfilPermitido, cert.cor, cert.icone, cert.ativa).run();
+        "INSERT INTO certificacoes (id, nome, descricao, perfil_permitido, cor, icone, ativa) VALUES (?, ?, ?, ?, ?, ?, ?)"
+      ).bind(cert.id, cert.nome, cert.descricao, cert.perfil_permitido, cert.cor, cert.icone, cert.ativa).run();
     }
   }
 
-  // Check if cqs table is empty
-  const cqCountRes = await db.prepare("SELECT COUNT(*) as count FROM cqs").first();
-  const cqCount = (cqCountRes as any)?.count || 0;
-  if (cqCount === 0) {
-    const defaultCQs = [
+  // Seed avaliadores if empty
+  const avCountRes = await db.prepare("SELECT COUNT(*) as count FROM avaliadores").first();
+  const avCount = (avCountRes as any)?.count || 0;
+  if (avCount === 0) {
+    const defaultAvaliadores = [
       {
         id: 'cq-1',
         nome: 'Pedro Henrique Santos',
         perfil: 'CQ',
-        cidadeBase: 'São Paulo - Base Leste',
+        cidade_base: 'São Paulo - Base Leste',
         status: 'Ativo'
       },
       {
         id: 'cq-2',
         nome: 'Juliana Mendes Silva',
         perfil: 'CQ',
-        cidadeBase: 'Campinas - Base Norte',
+        cidade_base: 'Campinas - Base Norte',
         status: 'Ativo'
       },
       {
         id: 'cq-3',
         nome: 'Rodrigo Antunes Costa',
         perfil: 'CQ',
-        cidadeBase: 'Rio de Janeiro - Base Sul',
+        cidade_base: 'Rio de Janeiro - Base Sul',
         status: 'Inativo'
       },
       {
         id: 'cq-4',
         nome: 'Thiago Anderson',
         perfil: 'Analista',
-        cidadeBase: 'São Paulo - Base Centro',
+        cidade_base: 'São Paulo - Base Centro',
         status: 'Ativo'
       }
     ];
 
-    for (const cq of defaultCQs) {
+    for (const av of defaultAvaliadores) {
       const now = new Date().toISOString();
       await db.prepare(
-        "INSERT INTO cqs (id, nome, perfil, cidadeBase, status, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?)"
-      ).bind(cq.id, cq.nome, cq.perfil, cq.cidadeBase, cq.status, now, now).run();
+        "INSERT INTO avaliadores (id, nome, perfil, cidade_base, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+      ).bind(av.id, av.nome, av.perfil, av.cidade_base, av.status, now, now).run();
     }
   }
 
-  // Check if itens table is empty
+  // Seed tecnicos if empty
+  const tecCountRes = await db.prepare("SELECT COUNT(*) as count FROM tecnicos").first();
+  const tecCount = (tecCountRes as any)?.count || 0;
+  if (tecCount === 0) {
+    const defaultTecnicos = [
+      {
+        id: 'tec-1',
+        nome: 'Marcos Vinícius Silva',
+        matricula: 'TR551234',
+        empresa: 'Claro S/A (Próprio)',
+        cidade_base: 'São Paulo - Base Leste'
+      },
+      {
+        id: 'tec-2',
+        nome: 'Ana Clara Oliveira',
+        matricula: 'TR884321',
+        empresa: 'Icomon Tecnologia',
+        cidade_base: 'São Paulo - Base Leste'
+      },
+      {
+        id: 'tec-3',
+        nome: 'Gabriel Henrique Santos',
+        matricula: 'TR992211',
+        empresa: 'Serede S/A',
+        cidade_base: 'São Paulo - Base Leste'
+      }
+    ];
+
+    for (const tec of defaultTecnicos) {
+      const now = new Date().toISOString();
+      await db.prepare(
+        "INSERT INTO tecnicos (id, nome, matricula, empresa, cidade_base, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+      ).bind(tec.id, tec.nome, tec.matricula, tec.empresa, tec.cidade_base, now, now).run();
+    }
+  }
+
+  // Seed grupos and itens if empty
   const itemsCountRes = await db.prepare("SELECT COUNT(*) as count FROM itens").first();
   const itemsCount = (itemsCountRes as any)?.count || 0;
   if (itemsCount === 0) {
+    // We populate groups
+    const groupsList = [
+      { id: 'g-processos', nome: 'Processos', cert: 'GPON Veterano' },
+      { id: 'g-inst-fisica', nome: 'Instalação Física', cert: 'GPON Veterano' },
+      { id: 'g-proc-cap', nome: 'Processos', cert: 'GPON Capacitação' },
+      { id: 'g-inst-cap', nome: 'Instalação Física', cert: 'GPON Capacitação' },
+      { id: 'g-dec-cap', nome: 'Decodificador', cert: 'GPON Capacitação' },
+      { id: 'g-banda-cap', nome: 'Banda Larga', cert: 'GPON Capacitação' },
+      { id: 'g-tel-cap', nome: 'Telefone', cert: 'GPON Capacitação' },
+      { id: 'g-app-cap', nome: 'Aplicativos', cert: 'GPON Capacitação' },
+      { id: 'g-atend-cap', nome: 'Atendimento Consultivo / TNPS', cert: 'GPON Capacitação' },
+      { id: 'g-proc-hfc', nome: 'Processos', cert: 'HFC Capacitação' },
+      { id: 'g-inst-hfc', nome: 'Instalação Física', cert: 'HFC Capacitação' },
+      { id: 'g-dec-hfc', nome: 'Decodificador', cert: 'HFC Capacitação' },
+      { id: 'g-banda-hfc', nome: 'Banda Larga', cert: 'HFC Capacitação' },
+      { id: 'g-tel-hfc', nome: 'Telefone', cert: 'HFC Capacitação' },
+      { id: 'g-app-hfc', nome: 'Aplicativos', cert: 'HFC Capacitação' },
+      { id: 'g-atend-hfc', nome: 'Atendimento Consultivo / TNPS', cert: 'HFC Capacitação' }
+    ];
+
+    for (const g of groupsList) {
+      await db.prepare("INSERT INTO grupos (id, nome, certificacao_id) VALUES (?, ?, ?)")
+        .bind(g.id, g.nome, g.cert)
+        .run();
+    }
+
     const defaultGponVeteranoRaw = [
       { id: 1, pergunta: 'Utilizou a caneta de limpeza? (Conector, Power Meter, Porta da NAP)', critico: false, grupo: 'Processos' },
       { id: 2, pergunta: 'Realizou medição de sinal na NAP? (Uso correto do Power Meter / configuração correta)', critico: false, grupo: 'Processos' },
@@ -180,7 +273,7 @@ export async function initDb(db: D1Database) {
       { id: 113, pergunta: 'Identificou corretamente o cabo?', critico: false, grupo: 'Instalação Física' },
       { id: 114, pergunta: 'Realizou a cintagem do poste?', critico: true, grupo: 'Instalação Física' },
       { id: 115, pergunta: 'Realizou corretamente a passagem do cabo óptico (AGF, SRDO, SDO etc.)?', critico: false, grupo: 'Instalação Física' },
-      { id: 116, pergunta: 'Instalou corretamente o PTO?', critico: false, grupo: 'Instalação Física' },
+      { id: 116, pergunta: 'Instalou correctly o PTO?', critico: false, grupo: 'Instalação Física' },
       { id: 117, pergunta: 'Explicou ao cliente sobre a fragilidade do cordão óptico?', critico: false, grupo: 'Instalação Física' },
       { id: 118, pergunta: 'Realizou reset de fábrica e instalação do decoder via Wi-Fi 5 GHz?', critico: false, grupo: 'Decodificador' },
       { id: 119, pergunta: 'Verificou se o decoder possui Status e IP corretamente?', critico: false, grupo: 'Decodificador' },
@@ -208,7 +301,7 @@ export async function initDb(db: D1Database) {
       { id: 141, pergunta: 'Preencheu corretamente a Ordem de Serviço Digital e coletou assinatura?', critico: false, grupo: 'Aplicativos' },
       { id: 142, pergunta: 'Finalizou o atendimento no PDA e lançou os materiais utilizados?', critico: false, grupo: 'Aplicativos' },
       { id: 143, pergunta: 'Informou os canais de Autoatendimento (Minha Claro, WhatsApp e Site)?', critico: false, grupo: 'Aplicativos' },
-      { id: 144, pergunta: 'Realizou a Autoinspeção?', critico: false, grupo: 'Aplicativos' },
+      { id: 144, pergunta: 'Realizou la Autoinspeção?', critico: false, grupo: 'Aplicativos' },
       { id: 145, pergunta: 'Informou sobre o TNPS e solicitou a avaliação?', critico: false, grupo: 'Atendimento Consultivo / TNPS' },
       { id: 146, pergunta: 'Explicou corretamente as notas do TNPS?', critico: false, grupo: 'Atendimento Consultivo / TNPS' },
     ];
@@ -230,7 +323,7 @@ export async function initDb(db: D1Database) {
       { id: 214, pergunta: 'Instalou corretamente o Cable Isolator?', critico: false, grupo: 'Instalação Física' },
       { id: 215, pergunta: 'Aplicou corretamente o torque nas conexões do MDU, passivos e equipamentos?', critico: false, grupo: 'Instalação Física' },
       { id: 216, pergunta: 'Explicou corretamente a importância do Mini Isolator?', critico: false, grupo: 'Instalação Física' },
-      { id: 217, pergunta: 'Executou corretamente a distribuição do sinal do cabo coaxial?', critico: false, grupo: 'Instalação Física' },
+      { id: 217, pergunta: 'Executou corretamente a distribuição do sinal do cabo coaxial?', critico: false, group: 'Instalação Física' },
       { id: 218, pergunta: 'Efetuou o reset de fábrica do decoder e realizou a configuração da base?', critico: false, grupo: 'Decodificador' },
       { id: 219, pergunta: 'Todos os pontos de TV ficaram com níveis de sinal dentro do padrão?', critico: false, grupo: 'Decodificador' },
       { id: 220, pergunta: 'Configurou e explicou a utilização do controle remoto?', critico: false, grupo: 'Decodificador' },
@@ -267,7 +360,7 @@ export async function initDb(db: D1Database) {
     ];
 
     const stmt = db.prepare(
-      "INSERT INTO itens (id, certificacao, grupo, ordem, descricao, critico, obrigatorio, ativo) VALUES (?, ?, ?, ?, ?, ?, ?, 1)"
+      "INSERT INTO itens (id, certificacao_id, grupo_id, ordem, descricao, critico, obrigatorio, ativo) VALUES (?, ?, ?, ?, ?, ?, ?, 1)"
     );
 
     // GPON Veterano
@@ -287,7 +380,7 @@ export async function initDb(db: D1Database) {
     }
   }
 
-  // Check if avaliacoes table is empty
+  // Seed avaliacoes if empty
   const evalCountRes = await db.prepare("SELECT COUNT(*) as count FROM avaliacoes").first();
   const evalCount = (evalCountRes as any)?.count || 0;
   if (evalCount === 0) {
@@ -295,15 +388,30 @@ export async function initDb(db: D1Database) {
     const seedEvals = [
       {
         id: 'seed-1',
-        nomeTecnico: 'Marcos Vinícius Silva',
+        tecnico_id: 'tec-1',
+        nome_tecnico: 'Marcos Vinícius Silva',
         matricula: 'TR551234',
         empresa: 'Claro S/A (Próprio)',
-        cidadeBase: 'São Paulo - Base Leste',
-        nomeCQ: 'Pedro Henrique Santos',
+        cidade_base: 'São Paulo - Base Leste',
+        avaliador_id: 'cq-1',
+        nome_cq: 'Pedro Henrique Santos',
         data: '2026-06-25',
-        tipoCertificacao: 'GPON Veterano',
+        certificacao_id: 'GPON Veterano',
         status: 'Concluída',
-        checklistResponses: JSON.stringify({
+        resultado: JSON.stringify({
+          totalAvaliado: 12,
+          acertos: 11,
+          nota: 9.2,
+          resultado: 'APROVADO',
+          itensNaoRealizados: [12],
+          itensCriticosNaoRealizados: []
+        }),
+        observacao: 'Iniciou com boa postura técnica.',
+        nota_teorica: 9.0,
+        nota_pratica: 9.2,
+        createdAt: '2026-06-25T10:30:00.000Z',
+        updatedAt: '2026-06-25T11:15:00.000Z',
+        responses: {
           1: 'Fez',
           2: 'Fez',
           3: 'Fez',
@@ -316,64 +424,71 @@ export async function initDb(db: D1Database) {
           10: 'Fez',
           11: 'Fez',
           12: 'NaoFez'
-        }),
-        resultado: JSON.stringify({
-          totalAvaliado: 12,
-          acertos: 11,
-          nota: 9.2,
-          resultado: 'APROVADO',
-          itensNaoRealizados: [12],
-          itensCriticosNaoRealizados: []
-        }),
-        observacao: 'Iniciou com boa postura técnica.',
-        notaTeorica: 9.0,
-        createdAt: '2026-06-25T10:30:00.000Z',
-        updatedAt: '2026-06-25T11:15:00.000Z'
+        }
       },
       {
         id: 'seed-2',
-        nomeTecnico: 'Ana Clara Oliveira',
+        tecnico_id: 'tec-2',
+        nome_tecnico: 'Ana Clara Oliveira',
         matricula: 'TR884321',
         empresa: 'Icomon Tecnologia',
-        cidadeBase: 'São Paulo - Base Leste',
-        nomeCQ: 'Pedro Henrique Santos',
+        cidade_base: 'São Paulo - Base Leste',
+        avaliador_id: 'cq-1',
+        nome_cq: 'Pedro Henrique Santos',
         data: todayStr,
-        tipoCertificacao: 'GPON Capacitação',
+        certificacao_id: 'GPON Capacitação',
         status: 'Rascunho',
-        checklistResponses: JSON.stringify({}),
         resultado: null,
         observacao: '',
-        notaTeorica: null,
+        nota_teorica: null,
+        nota_pratica: null,
         createdAt: '2026-07-01T14:22:00.000Z',
-        updatedAt: '2026-07-01T14:22:00.000Z'
+        updatedAt: '2026-07-01T14:22:00.000Z',
+        responses: {}
       },
       {
         id: 'seed-3',
-        nomeTecnico: 'Gabriel Henrique Santos',
+        tecnico_id: 'tec-3',
+        nome_tecnico: 'Gabriel Henrique Santos',
         matricula: 'TR992211',
         empresa: 'Serede S/A',
-        cidadeBase: 'São Paulo - Base Leste',
-        nomeCQ: 'Pedro Henrique Santos',
+        cidade_base: 'São Paulo - Base Leste',
+        avaliador_id: 'cq-1',
+        nome_cq: 'Pedro Henrique Santos',
         data: todayStr,
-        tipoCertificacao: 'HFC Capacitação',
+        certificacao_id: 'HFC Capacitação',
         status: 'Concluída',
-        checklistResponses: JSON.stringify({}),
         resultado: null,
         observacao: '',
-        notaTeorica: null,
+        nota_teorica: null,
+        nota_pratica: null,
         createdAt: '2026-07-03T09:00:00.000Z',
-        updatedAt: '2026-07-03T09:12:00.000Z'
+        updatedAt: '2026-07-03T09:12:00.000Z',
+        responses: {}
       }
     ];
 
     const stmt = db.prepare(
-      "INSERT INTO avaliacoes (id, nomeTecnico, matricula, empresa, cidadeBase, nomeCQ, data, tipoCertificacao, status, checklistResponses, resultado, observacao, notaTeorica, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      `INSERT INTO avaliacoes (
+        id, tecnico_id, nome_tecnico, matricula, empresa, cidade_base, 
+        avaliador_id, nome_cq, data, certificacao_id, status, resultado, 
+        observacao, nota_teorica, nota_pratica, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
 
     for (const e of seedEvals) {
       await stmt.bind(
-        e.id, e.nomeTecnico, e.matricula, e.empresa, e.cidadeBase, e.nomeCQ, e.data, e.tipoCertificacao, e.status, e.checklistResponses, e.resultado, e.observacao, e.notaTeorica, e.createdAt, e.updatedAt
+        e.id, e.tecnico_id, e.nome_tecnico, e.matricula, e.empresa, e.cidade_base,
+        e.avaliador_id, e.nome_cq, e.data, e.certificacao_id, e.status, e.resultado,
+        e.observacao, e.nota_teorica, e.nota_pratica, e.createdAt, e.updatedAt
       ).run();
+
+      for (const [itemIdStr, resVal] of Object.entries(e.responses)) {
+        const itemId = parseInt(itemIdStr, 10);
+        await db.prepare(
+          "INSERT INTO respostas (id, avaliacao_id, item_id, resposta) VALUES (?, ?, ?, ?)"
+        ).bind(`${e.id}_${itemId}`, e.id, itemId, resVal).run();
+      }
     }
   }
 }

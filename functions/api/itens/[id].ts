@@ -2,22 +2,23 @@ import { initDb, Env } from '../_db';
 
 export const onRequest: PagesFunction<Env> = async (context) => {
   const { request, env, params } = context;
-  await initDb(env.DB);
-  const idStr = params.id as string;
-  const id = parseInt(idStr, 10);
+  try {
+    await initDb(env.DB);
+    const idStr = params.id as string;
+    const id = parseInt(idStr, 10);
 
-  if (isNaN(id)) {
-    return new Response(JSON.stringify({ error: "Invalid or missing ID" }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' }
-    });
-  }
+    if (isNaN(id)) {
+      return Response.json({
+        success: false,
+        error: "Invalid or missing ID",
+        route: request.url
+      }, { status: 400 });
+    }
 
-  if (request.method === 'PUT') {
-    try {
+    if (request.method === 'PUT') {
       const data = await request.json() as any;
       await env.DB.prepare(
-        "UPDATE itens SET certificacao = ?, grupo = ?, ordem = ?, descricao = ?, critico = ?, obrigatorio = ?, ativo = ? WHERE id = ?"
+        "UPDATE itens SET certificacao_id = ?, grupo_id = ?, ordem = ?, descricao = ?, critico = ?, obrigatorio = ?, ativo = ? WHERE id = ?"
       ).bind(
         data.certificacao,
         data.grupo || '',
@@ -29,30 +30,25 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         id
       ).run();
 
-      return new Response(JSON.stringify({ success: true }), {
-        headers: { 'Content-Type': 'application/json' }
-      });
-    } catch (err: any) {
-      return new Response(JSON.stringify({ error: err.message }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' }
-      });
+      return Response.json({ success: true });
     }
-  }
 
-  if (request.method === 'DELETE') {
-    try {
+    if (request.method === 'DELETE') {
       await env.DB.prepare("DELETE FROM itens WHERE id = ?").bind(id).run();
-      return new Response(JSON.stringify({ success: true }), {
-        headers: { 'Content-Type': 'application/json' }
-      });
-    } catch (err: any) {
-      return new Response(JSON.stringify({ error: err.message }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' }
-      });
+      return Response.json({ success: true });
     }
-  }
 
-  return new Response("Method not allowed", { status: 405 });
+    return Response.json({
+      success: false,
+      error: "Method not allowed",
+      route: request.url
+    }, { status: 405 });
+
+  } catch (error) {
+    return Response.json({
+      success: false,
+      error: String(error),
+      route: request.url
+    }, { status: 500 });
+  }
 };

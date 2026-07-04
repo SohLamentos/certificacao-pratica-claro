@@ -1,44 +1,51 @@
 import { initDb, Env } from '../_db';
 
-export const onRequestPut: PagesFunction<Env> = async ({ request, env, params }) => {
-  await initDb(env.DB);
-  const id = params.id as string;
-
-  if (!id) {
-    return Response.json({ error: "Missing ID" }, { status: 400 });
-  }
-
+export const onRequest: PagesFunction<Env> = async (context) => {
+  const { request, env, params } = context;
   try {
-    const data = await request.json() as any;
-    await env.DB.prepare(
-      "UPDATE cqs SET nome = ?, perfil = ?, cidadeBase = ?, status = ?, updatedAt = ? WHERE id = ?"
-    ).bind(
-      data.nome,
-      data.perfil,
-      data.cidadeBase,
-      data.status,
-      data.updatedAt || new Date().toISOString(),
-      id
-    ).run();
+    await initDb(env.DB);
+    const id = params.id as string;
 
-    return Response.json({ success: true });
-  } catch (err: any) {
-    return Response.json({ error: err.message }, { status: 400 });
-  }
-};
+    if (!id) {
+      return Response.json({
+        success: false,
+        error: "Missing ID",
+        route: request.url
+      }, { status: 400 });
+    }
 
-export const onRequestDelete: PagesFunction<Env> = async ({ env, params }) => {
-  await initDb(env.DB);
-  const id = params.id as string;
+    if (request.method === 'PUT') {
+      const data = await request.json() as any;
+      await env.DB.prepare(
+        "UPDATE avaliadores SET nome = ?, perfil = ?, cidade_base = ?, status = ?, updated_at = ? WHERE id = ?"
+      ).bind(
+        data.nome,
+        data.perfil,
+        data.cidadeBase,
+        data.status,
+        data.updatedAt || new Date().toISOString(),
+        id
+      ).run();
 
-  if (!id) {
-    return Response.json({ error: "Missing ID" }, { status: 400 });
-  }
+      return Response.json({ success: true });
+    }
 
-  try {
-    await env.DB.prepare("DELETE FROM cqs WHERE id = ?").bind(id).run();
-    return Response.json({ success: true });
-  } catch (err: any) {
-    return Response.json({ error: err.message }, { status: 400 });
+    if (request.method === 'DELETE') {
+      await env.DB.prepare("DELETE FROM avaliadores WHERE id = ?").bind(id).run();
+      return Response.json({ success: true });
+    }
+
+    return Response.json({
+      success: false,
+      error: "Method not allowed",
+      route: request.url
+    }, { status: 405 });
+
+  } catch (error) {
+    return Response.json({
+      success: false,
+      error: String(error),
+      route: request.url
+    }, { status: 500 });
   }
 };
