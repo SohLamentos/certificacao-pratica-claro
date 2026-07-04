@@ -17,7 +17,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     if (request.method === 'PUT') {
       const data = await request.json() as any;
       await env.DB.prepare(
-        "UPDATE certificacoes SET nome = ?, descricao = ?, perfil_permitido = ?, cor = ?, icone = ?, ativa = ? WHERE id = ?"
+        "UPDATE certificacoes SET nome = ?, descricao = ?, perfil_permitido = ?, cor = ?, icone = ?, ativa = ? WHERE id = ? OR nome = ?"
       ).bind(
         data.nome,
         data.descricao || '',
@@ -25,6 +25,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         data.cor || '',
         data.icone || '',
         data.ativa ? 1 : 0,
+        id,
         id
       ).run();
 
@@ -32,7 +33,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
 
     if (request.method === 'DELETE') {
-      await env.DB.prepare("DELETE FROM certificacoes WHERE id = ?").bind(id).run();
+      await env.DB.prepare("DELETE FROM certificacoes WHERE id = ? OR nome = ?").bind(id, id).run();
       return Response.json({ success: true });
     }
 

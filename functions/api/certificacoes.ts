@@ -8,7 +8,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     ).all();
 
     const mapped = results.map((row: any) => ({
-      id: row.id,
+      id: row.nome,
       nome: row.nome,
       descricao: row.descricao,
       perfilPermitido: row.perfil_permitido,
@@ -31,10 +31,9 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   try {
     await initDb(env.DB);
     const data = await request.json() as any;
-    await env.DB.prepare(
-      "INSERT INTO certificacoes (id, nome, descricao, perfil_permitido, cor, icone, ativa) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    const result = await env.DB.prepare(
+      "INSERT INTO certificacoes (nome, descricao, perfil_permitido, cor, icone, ativa) VALUES (?, ?, ?, ?, ?, ?)"
     ).bind(
-      data.id,
       data.nome,
       data.descricao || '',
       data.perfilPermitido,
@@ -43,7 +42,9 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       data.ativa ? 1 : 0
     ).run();
 
-    return Response.json({ success: true, id: data.id });
+    const lastId = result.meta?.last_row_id || (result as any).lastRowId;
+
+    return Response.json({ success: true, id: String(lastId) });
   } catch (error) {
     return Response.json({
       success: false,

@@ -19,28 +19,60 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       const resultadoStr = data.resultado ? JSON.stringify(data.resultado) : null;
       const notaPrat = data.resultado?.nota !== undefined ? Number(data.resultado.nota) : null;
 
+      // 1. Resolve or insert Tecnico
+      let tecId: number | null = null;
+      const tecRow = await env.DB.prepare("SELECT id FROM tecnicos WHERE matricula = ?").bind(data.matricula).first();
+      if (tecRow) {
+        tecId = (tecRow as any).id;
+      } else {
+        const resultTec = await env.DB.prepare(
+          "INSERT INTO tecnicos (nome, matricula, empresa, cidade_base, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+        ).bind(
+          data.nomeTecnico,
+          data.matricula,
+          data.empresa,
+          data.cidadeBase
+        ).run();
+        tecId = resultTec.meta?.last_row_id || (resultTec as any).lastRowId || null;
+      }
+
+      // 2. Resolve Avaliador
+      let avaliadorId: number | null = null;
+      const avRow = await env.DB.prepare("SELECT id FROM avaliadores WHERE nome = ?").bind(data.nomeCQ).first();
+      if (avRow) {
+        avaliadorId = (avRow as any).id;
+      }
+
+      // 3. Resolve Certificacao
+      let certId: number | null = null;
+      const certRow = await env.DB.prepare("SELECT id FROM certificacoes WHERE nome = ?").bind(data.tipoCertificacao).first();
+      if (certRow) {
+        certId = (certRow as any).id;
+      }
+
       // Update evaluation
       await env.DB.prepare(
         `UPDATE avaliacoes SET 
-          nome_tecnico = ?, matricula = ?, empresa = ?, cidade_base = ?, 
-          nome_cq = ?, data = ?, certificacao_id = ?, status = ?, 
+          tecnico_id = ?, nome_tecnico = ?, matricula = ?, empresa = ?, cidade_base = ?, 
+          avaliador_id = ?, nome_cq = ?, data = ?, certificacao_id = ?, status = ?, 
           resultado = ?, observacao = ?, nota_teorica = ?, nota_pratica = ?, 
-          updated_at = ? 
+          updated_at = CURRENT_TIMESTAMP 
         WHERE id = ?`
       ).bind(
+        tecId,
         data.nomeTecnico,
         data.matricula,
         data.empresa,
         data.cidadeBase,
+        avaliadorId,
         data.nomeCQ,
         data.data,
-        data.tipoCertificacao,
+        certId,
         data.status,
         resultadoStr,
         data.observacao || '',
         data.notaTeorica !== undefined && data.notaTeorica !== null ? Number(data.notaTeorica) : null,
         notaPrat,
-        data.updatedAt || new Date().toISOString(),
         id
       ).run();
 

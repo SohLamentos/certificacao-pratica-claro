@@ -2,11 +2,38 @@ export interface Env {
   DB: D1Database;
 }
 
+async function checkAndMigrateSchema(db: D1Database) {
+  let shouldDrop = false;
+  try {
+    const info = await db.prepare("PRAGMA table_info(certificacoes)").all();
+    if (info && info.results && info.results.length > 0) {
+      const idCol = info.results.find((col: any) => col.name === 'id');
+      if (idCol && (idCol.type === 'TEXT' || idCol.type === 'text')) {
+        shouldDrop = true;
+      }
+    }
+  } catch (e) {
+    // Table might not exist yet
+  }
+
+  if (shouldDrop) {
+    await db.prepare("DROP TABLE IF EXISTS respostas").run();
+    await db.prepare("DROP TABLE IF EXISTS avaliacoes").run();
+    await db.prepare("DROP TABLE IF EXISTS itens").run();
+    await db.prepare("DROP TABLE IF EXISTS grupos").run();
+    await db.prepare("DROP TABLE IF EXISTS certificacoes").run();
+    await db.prepare("DROP TABLE IF EXISTS avaliadores").run();
+    await db.prepare("DROP TABLE IF EXISTS tecnicos").run();
+  }
+}
+
 export async function initCertificacoes(db: D1Database) {
+  await checkAndMigrateSchema(db);
+
   // Ensure table certificacoes exists
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS certificacoes (
-      id TEXT PRIMARY KEY,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
       nome TEXT NOT NULL,
       descricao TEXT,
       perfil_permitido TEXT NOT NULL,
@@ -22,7 +49,6 @@ export async function initCertificacoes(db: D1Database) {
   if (certCount === 0) {
     const defaultCerts = [
       {
-        id: 'gpon-veterano',
         nome: 'GPON Veterano',
         descricao: 'Avaliação prática periódica para técnicos veteranos em tecnologia de fibra óptica GPON.',
         perfil_permitido: 'Apenas CQ',
@@ -31,7 +57,6 @@ export async function initCertificacoes(db: D1Database) {
         ativa: 1
       },
       {
-        id: 'gpon-capacitacao',
         nome: 'GPON Capacitação',
         descricao: 'Auditoria de capacitação técnica inicial para novos técnicos em rede óptica GPON.',
         perfil_permitido: 'Apenas Analista',
@@ -40,7 +65,6 @@ export async function initCertificacoes(db: D1Database) {
         ativa: 1
       },
       {
-        id: 'hfc-capacitacao',
         nome: 'HFC Capacitação',
         descricao: 'Auditoria de padrões e conformidades para redes coaxiais (HFC) e decodificadores.',
         perfil_permitido: 'CQ ou Analista',
@@ -52,8 +76,8 @@ export async function initCertificacoes(db: D1Database) {
 
     for (const cert of defaultCerts) {
       await db.prepare(
-        "INSERT INTO certificacoes (id, nome, descricao, perfil_permitido, cor, icone, ativa) VALUES (?, ?, ?, ?, ?, ?, ?)"
-      ).bind(cert.id, cert.nome, cert.descricao, cert.perfil_permitido, cert.cor, cert.icone, cert.ativa).run();
+        "INSERT INTO certificacoes (nome, descricao, perfil_permitido, cor, icone, ativa) VALUES (?, ?, ?, ?, ?, ?)"
+      ).bind(cert.nome, cert.descricao, cert.perfil_permitido, cert.cor, cert.icone, cert.ativa).run();
     }
   }
 }
@@ -65,18 +89,18 @@ export async function initDb(db: D1Database) {
   // 2. Initialize Grupos
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS grupos (
-      id TEXT PRIMARY KEY,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
       nome TEXT NOT NULL,
-      certificacao_id TEXT NOT NULL
+      certificacao_id INTEGER NOT NULL
     )
   `).run();
 
   // 3. Initialize Itens
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS itens (
-      id INTEGER PRIMARY KEY,
-      certificacao_id TEXT NOT NULL,
-      grupo_id TEXT NOT NULL,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      certificacao_id INTEGER NOT NULL,
+      grupo_id INTEGER NOT NULL,
       ordem INTEGER NOT NULL,
       descricao TEXT NOT NULL,
       critico INTEGER NOT NULL DEFAULT 0,
@@ -117,16 +141,16 @@ export async function initDb(db: D1Database) {
   // 6. Initialize Avaliacoes
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS avaliacoes (
-      id TEXT PRIMARY KEY,
-      tecnico_id TEXT,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tecnico_id INTEGER,
       nome_tecnico TEXT NOT NULL,
       matricula TEXT NOT NULL,
       empresa TEXT NOT NULL,
       cidade_base TEXT NOT NULL,
-      avaliador_id TEXT,
+      avaliador_id INTEGER,
       nome_cq TEXT NOT NULL,
       data TEXT NOT NULL,
-      certificacao_id TEXT NOT NULL,
+      certificacao_id INTEGER NOT NULL,
       status TEXT NOT NULL,
       resultado TEXT,
       observacao TEXT,
@@ -141,7 +165,7 @@ export async function initDb(db: D1Database) {
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS respostas (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      avaliacao_id TEXT NOT NULL,
+      avaliacao_id INTEGER NOT NULL,
       item_id INTEGER NOT NULL,
       resposta TEXT NOT NULL
     )
@@ -227,31 +251,47 @@ export async function initDb(db: D1Database) {
   const itemsCountRes = await db.prepare("SELECT COUNT(*) as count FROM itens").first();
   const itemsCount = (itemsCountRes as any)?.count || 0;
   if (itemsCount === 0) {
-    // We populate groups
+    // Get the mapping of certificacao name -> id
+    const certsRows = await db.prepare("SELECT id, nome FROM certificacoes").all();
+    const certsMap = new Map<string, number>();
+    certsRows.results.forEach((row: any) => {
+      certsMap.set(row.nome, row.id);
+    });
+
     const groupsList = [
-      { id: 'g-processos', nome: 'Processos', cert: 'GPON Veterano' },
-      { id: 'g-inst-fisica', nome: 'Instalação Física', cert: 'GPON Veterano' },
-      { id: 'g-proc-cap', nome: 'Processos', cert: 'GPON Capacitação' },
-      { id: 'g-inst-cap', nome: 'Instalação Física', cert: 'GPON Capacitação' },
-      { id: 'g-dec-cap', nome: 'Decodificador', cert: 'GPON Capacitação' },
-      { id: 'g-banda-cap', nome: 'Banda Larga', cert: 'GPON Capacitação' },
-      { id: 'g-tel-cap', nome: 'Telefone', cert: 'GPON Capacitação' },
-      { id: 'g-app-cap', nome: 'Aplicativos', cert: 'GPON Capacitação' },
-      { id: 'g-atend-cap', nome: 'Atendimento Consultivo / TNPS', cert: 'GPON Capacitação' },
-      { id: 'g-proc-hfc', nome: 'Processos', cert: 'HFC Capacitação' },
-      { id: 'g-inst-hfc', nome: 'Instalação Física', cert: 'HFC Capacitação' },
-      { id: 'g-dec-hfc', nome: 'Decodificador', cert: 'HFC Capacitação' },
-      { id: 'g-banda-hfc', nome: 'Banda Larga', cert: 'HFC Capacitação' },
-      { id: 'g-tel-hfc', nome: 'Telefone', cert: 'HFC Capacitação' },
-      { id: 'g-app-hfc', nome: 'Aplicativos', cert: 'HFC Capacitação' },
-      { id: 'g-atend-hfc', nome: 'Atendimento Consultivo / TNPS', cert: 'HFC Capacitação' }
+      { nome: 'Processos', cert: 'GPON Veterano' },
+      { nome: 'Instalação Física', cert: 'GPON Veterano' },
+      { nome: 'Processos', cert: 'GPON Capacitação' },
+      { nome: 'Instalação Física', cert: 'GPON Capacitação' },
+      { nome: 'Decodificador', cert: 'GPON Capacitação' },
+      { nome: 'Banda Larga', cert: 'GPON Capacitação' },
+      { nome: 'Telefone', cert: 'GPON Capacitação' },
+      { nome: 'Aplicativos', cert: 'GPON Capacitação' },
+      { nome: 'Atendimento Consultivo / TNPS', cert: 'GPON Capacitação' },
+      { nome: 'Processos', cert: 'HFC Capacitação' },
+      { nome: 'Instalação Física', cert: 'HFC Capacitação' },
+      { nome: 'Decodificador', cert: 'HFC Capacitação' },
+      { nome: 'Banda Larga', cert: 'HFC Capacitação' },
+      { nome: 'Telefone', cert: 'HFC Capacitação' },
+      { nome: 'Aplicativos', cert: 'HFC Capacitação' },
+      { nome: 'Atendimento Consultivo / TNPS', cert: 'HFC Capacitação' }
     ];
 
     for (const g of groupsList) {
-      await db.prepare("INSERT INTO grupos (id, nome, certificacao_id) VALUES (?, ?, ?)")
-        .bind(g.id, g.nome, g.cert)
-        .run();
+      const certId = certsMap.get(g.cert);
+      if (certId) {
+        await db.prepare("INSERT INTO grupos (nome, certificacao_id) VALUES (?, ?)")
+          .bind(g.nome, certId)
+          .run();
+      }
     }
+
+    // Retrieve all groups to map
+    const groupsRows = await db.prepare("SELECT id, nome, certificacao_id FROM grupos").all();
+    const groupsMap = new Map<string, number>();
+    groupsRows.results.forEach((row: any) => {
+      groupsMap.set(`${row.certificacao_id}_${row.nome}`, row.id);
+    });
 
     const defaultGponVeteranoRaw = [
       { id: 1, pergunta: 'Utilizou a caneta de limpeza? (Conector, Power Meter, Porta da NAP)', critico: false, grupo: 'Processos' },
@@ -284,13 +324,13 @@ export async function initDb(db: D1Database) {
       { id: 113, pergunta: 'Identificou corretamente o cabo?', critico: false, grupo: 'Instalação Física' },
       { id: 114, pergunta: 'Realizou a cintagem do poste?', critico: true, grupo: 'Instalação Física' },
       { id: 115, pergunta: 'Realizou corretamente a passagem do cabo óptico (AGF, SRDO, SDO etc.)?', critico: false, grupo: 'Instalação Física' },
-      { id: 116, pergunta: 'Instalou correctly o PTO?', critico: false, grupo: 'Instalação Física' },
+      { id: 116, pergunta: 'Instalou corretamente o PTO?', critico: false, grupo: 'Instalação Física' },
       { id: 117, pergunta: 'Explicou ao cliente sobre a fragilidade do cordão óptico?', critico: false, grupo: 'Instalação Física' },
       { id: 118, pergunta: 'Realizou reset de fábrica e instalação do decoder via Wi-Fi 5 GHz?', critico: false, grupo: 'Decodificador' },
       { id: 119, pergunta: 'Verificou se o decoder possui Status e IP corretamente?', critico: false, grupo: 'Decodificador' },
       { id: 120, pergunta: 'Configurou e explicou a utilização básica do controle remoto?', critico: false, grupo: 'Decodificador' },
       { id: 121, pergunta: 'Retirou bloqueio por idade e alterou senha de compra?', critico: false, grupo: 'Decodificador' },
-      { id: 122, pergunta: 'Configurou corretamente TV e Decoder (HDMI, resolução, formato de exibição e sistema de áudio)?', critico: true, group: 'Decodificador' },
+      { id: 122, pergunta: 'Configurou corretamente TV e Decoder (HDMI, resolução, formato de exibição e sistema de áudio)?', critico: true, grupo: 'Decodificador' },
       { id: 123, pergunta: 'Explicou os recursos de gravação (Agendar gravação)?', critico: false, grupo: 'Decodificador' },
       { id: 124, pergunta: 'Demonstrou o Replay TV?', critico: false, grupo: 'Decodificador' },
       { id: 125, pergunta: 'Explicou a função Autodesligar?', critico: false, grupo: 'Decodificador' },
@@ -312,7 +352,7 @@ export async function initDb(db: D1Database) {
       { id: 141, pergunta: 'Preencheu corretamente a Ordem de Serviço Digital e coletou assinatura?', critico: false, grupo: 'Aplicativos' },
       { id: 142, pergunta: 'Finalizou o atendimento no PDA e lançou os materiais utilizados?', critico: false, grupo: 'Aplicativos' },
       { id: 143, pergunta: 'Informou os canais de Autoatendimento (Minha Claro, WhatsApp e Site)?', critico: false, grupo: 'Aplicativos' },
-      { id: 144, pergunta: 'Realizou la Autoinspeção?', critico: false, grupo: 'Aplicativos' },
+      { id: 144, pergunta: 'Realizou a Autoinspeção?', critico: false, grupo: 'Aplicativos' },
       { id: 145, pergunta: 'Informou sobre o TNPS e solicitou a avaliação?', critico: false, grupo: 'Atendimento Consultivo / TNPS' },
       { id: 146, pergunta: 'Explicou corretamente as notas do TNPS?', critico: false, grupo: 'Atendimento Consultivo / TNPS' },
     ];
@@ -335,7 +375,7 @@ export async function initDb(db: D1Database) {
       { id: 215, pergunta: 'Aplicou corretamente o torque nas conexões do MDU, passivos e equipamentos?', critico: false, grupo: 'Instalação Física' },
       { id: 216, pergunta: 'Explicou corretamente a importância do Mini Isolator?', critico: false, grupo: 'Instalação Física' },
       { id: 217, pergunta: 'Executou corretamente a distribuição do sinal do cabo coaxial?', critico: false, grupo: 'Instalação Física' },
-      { id: 218, pergunta: 'Efetuou o reset de fábrica do decoder e realizou a configuração da base?', critico: false, grupo: 'Decodificador' },
+      { id: 218, pergunta: 'Efetuou o reset de fábrica do decoder e realizou a configuration da base?', critico: false, grupo: 'Decodificador' },
       { id: 219, pergunta: 'Todos os pontos de TV ficaram com níveis de sinal dentro do padrão?', critico: false, grupo: 'Decodificador' },
       { id: 220, pergunta: 'Configurou e explicou a utilização do controle remoto?', critico: false, grupo: 'Decodificador' },
       { id: 221, pergunta: 'Retirou o bloqueio por idade e alterou a senha de compra?', critico: false, grupo: 'Decodificador' },
@@ -371,23 +411,29 @@ export async function initDb(db: D1Database) {
     ];
 
     const stmt = db.prepare(
-      "INSERT INTO itens (id, certificacao_id, grupo_id, ordem, descricao, critico, obrigatorio, ativo) VALUES (?, ?, ?, ?, ?, ?, ?, 1)"
+      "INSERT INTO itens (certificacao_id, grupo_id, ordem, descricao, critico, obrigatorio, ativo) VALUES (?, ?, ?, ?, ?, ?, 1)"
     );
 
     // GPON Veterano
     for (let i = 0; i < defaultGponVeteranoRaw.length; i++) {
       const x = defaultGponVeteranoRaw[i];
-      await stmt.bind(x.id, 'GPON Veterano', x.grupo, i + 1, x.pergunta, x.critico ? 1 : 0, x.critico ? 1 : 0).run();
+      const certId = certsMap.get('GPON Veterano')!;
+      const grupoId = groupsMap.get(`${certId}_${x.grupo}`)!;
+      await stmt.bind(certId, grupoId, i + 1, x.pergunta, x.critico ? 1 : 0, x.critico ? 1 : 0).run();
     }
     // GPON Capacitação
     for (let i = 0; i < defaultGponCapacitacaoRaw.length; i++) {
       const x = defaultGponCapacitacaoRaw[i];
-      await stmt.bind(x.id, 'GPON Capacitação', x.grupo, i + 1, x.pergunta, x.critico ? 1 : 0, x.critico ? 1 : 0).run();
+      const certId = certsMap.get('GPON Capacitação')!;
+      const grupoId = groupsMap.get(`${certId}_${x.grupo}`)!;
+      await stmt.bind(certId, grupoId, i + 1, x.pergunta, x.critico ? 1 : 0, x.critico ? 1 : 0).run();
     }
     // HFC Capacitação
     for (let i = 0; i < defaultHfcCapacitacaoRaw.length; i++) {
       const x = defaultHfcCapacitacaoRaw[i];
-      await stmt.bind(x.id, 'HFC Capacitação', x.grupo, i + 1, x.pergunta, x.critico ? 1 : 0, x.critico ? 1 : 0).run();
+      const certId = certsMap.get('HFC Capacitação')!;
+      const grupoId = groupsMap.get(`${certId}_${x.grupo}`)!;
+      await stmt.bind(certId, grupoId, i + 1, x.pergunta, x.critico ? 1 : 0, x.critico ? 1 : 0).run();
     }
   }
 
@@ -395,19 +441,41 @@ export async function initDb(db: D1Database) {
   const evalCountRes = await db.prepare("SELECT COUNT(*) as count FROM avaliacoes").first();
   const evalCount = (evalCountRes as any)?.count || 0;
   if (evalCount === 0) {
+    // Get mappings to use
+    const certsRows = await db.prepare("SELECT id, nome FROM certificacoes").all();
+    const certsMap = new Map<string, number>();
+    certsRows.results.forEach((row: any) => {
+      certsMap.set(row.nome, row.id);
+    });
+
+    const itemsRows = await db.prepare("SELECT id, certificacao_id, ordem FROM itens").all();
+    const itemsMap = new Map<string, number>();
+    itemsRows.results.forEach((row: any) => {
+      itemsMap.set(`${row.certificacao_id}_${row.ordem}`, row.id);
+    });
+
+    const getOrdemFromOldItemId = (oldId: number, certName: string): number => {
+      if (certName === 'GPON Veterano') {
+        return oldId;
+      } else if (certName === 'GPON Capacitação') {
+        return oldId - 100;
+      } else {
+        return oldId - 200;
+      }
+    };
+
     const todayStr = new Date().toISOString().split('T')[0];
     const seedEvals = [
       {
-        id: 'seed-1',
-        tecnico_id: '1',
+        tecnico_id: 1,
         nome_tecnico: 'Marcos Vinícius Silva',
         matricula: 'TR551234',
         empresa: 'Claro S/A (Próprio)',
         cidade_base: 'São Paulo - Base Leste',
-        avaliador_id: '1',
+        avaliador_id: 1,
         nome_cq: 'Pedro Henrique Santos',
         data: '2026-06-25',
-        certificacao_id: 'GPON Veterano',
+        certificacao_nome: 'GPON Veterano',
         status: 'Concluída',
         resultado: JSON.stringify({
           totalAvaliado: 12,
@@ -438,16 +506,15 @@ export async function initDb(db: D1Database) {
         }
       },
       {
-        id: 'seed-2',
-        tecnico_id: '2',
+        tecnico_id: 2,
         nome_tecnico: 'Ana Clara Oliveira',
         matricula: 'TR884321',
         empresa: 'Icomon Tecnologia',
         cidade_base: 'São Paulo - Base Leste',
-        avaliador_id: '1',
+        avaliador_id: 1,
         nome_cq: 'Pedro Henrique Santos',
         data: todayStr,
-        certificacao_id: 'GPON Capacitação',
+        certificacao_nome: 'GPON Capacitação',
         status: 'Rascunho',
         resultado: null,
         observacao: '',
@@ -458,16 +525,15 @@ export async function initDb(db: D1Database) {
         responses: {}
       },
       {
-        id: 'seed-3',
-        tecnico_id: '3',
+        tecnico_id: 3,
         nome_tecnico: 'Gabriel Henrique Santos',
         matricula: 'TR992211',
         empresa: 'Serede S/A',
         cidade_base: 'São Paulo - Base Leste',
-        avaliador_id: '1',
+        avaliador_id: 1,
         nome_cq: 'Pedro Henrique Santos',
         data: todayStr,
-        certificacao_id: 'HFC Capacitação',
+        certificacao_nome: 'HFC Capacitação',
         status: 'Concluída',
         resultado: null,
         observacao: '',
@@ -479,37 +545,37 @@ export async function initDb(db: D1Database) {
       }
     ];
 
-    const stmt = db.prepare(
-      `INSERT INTO avaliacoes (
-        id, tecnico_id, nome_tecnico, matricula, empresa, city_base,
-        cidade_base, avaliador_id, nome_cq, data, certificacao_id, status, resultado,
-        observacao, nota_teorica, nota_pratica, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    );
-
-    // Wait! Let's check table definition: we used `cidade_base` instead of `city_base`.
-    // Let's replace `city_base` with `cidade_base` in the statement
     const stmtCorrect = db.prepare(
       `INSERT INTO avaliacoes (
-        id, tecnico_id, nome_tecnico, matricula, empresa, cidade_base, 
+        tecnico_id, nome_tecnico, matricula, empresa, cidade_base, 
         avaliador_id, nome_cq, data, certificacao_id, status, resultado, 
         observacao, nota_teorica, nota_pratica, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
 
     for (const e of seedEvals) {
+      const certId = certsMap.get(e.certificacao_nome)!;
       await stmtCorrect.bind(
-        e.id, e.tecnico_id, e.nome_tecnico, e.matricula, e.empresa, e.cidade_base,
-        e.avaliador_id, e.nome_cq, e.data, e.certificacao_id, e.status, e.resultado,
+        e.tecnico_id, e.nome_tecnico, e.matricula, e.empresa, e.cidade_base,
+        e.avaliador_id, e.nome_cq, e.data, certId, e.status, e.resultado,
         e.observacao, e.nota_teorica, e.nota_pratica, e.createdAt, e.updatedAt
       ).run();
 
-      for (const [itemIdStr, resVal] of Object.entries(e.responses)) {
-        const itemId = parseInt(itemIdStr, 10);
-        // Let's insert into responses without manual ID to ensure auto-increment compatibility!
-        await db.prepare(
-          "INSERT INTO respostas (avaliacao_id, item_id, resposta) VALUES (?, ?, ?)"
-        ).bind(e.id, itemId, resVal).run();
+      // Retrieve generated eval ID
+      const lastIdRes = await db.prepare("SELECT last_insert_rowid() as id").first();
+      const evalId = (lastIdRes as any)?.id;
+
+      if (evalId) {
+        for (const [oldIdStr, resVal] of Object.entries(e.responses)) {
+          const oldId = parseInt(oldIdStr, 10);
+          const ordem = getOrdemFromOldItemId(oldId, e.certificacao_nome);
+          const itemId = itemsMap.get(`${certId}_${ordem}`);
+          if (itemId) {
+            await db.prepare(
+              "INSERT INTO respostas (avaliacao_id, item_id, resposta) VALUES (?, ?, ?)"
+            ).bind(evalId, itemId, resVal).run();
+          }
+        }
       }
     }
   }
