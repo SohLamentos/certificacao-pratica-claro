@@ -32,10 +32,12 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   try {
     await initDb(env.DB);
     const data = await request.json() as any;
+    const itemId = parseInt(data.id, 10);
+    
     await env.DB.prepare(
       "INSERT INTO itens (id, certificacao_id, grupo_id, ordem, descricao, critico, obrigatorio, ativo) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
     ).bind(
-      data.id,
+      isNaN(itemId) ? null : itemId,
       data.certificacao,
       data.grupo || '',
       data.ordem,

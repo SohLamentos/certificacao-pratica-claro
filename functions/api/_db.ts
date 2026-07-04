@@ -2,8 +2,8 @@ export interface Env {
   DB: D1Database;
 }
 
-export async function initDb(db: D1Database) {
-  // Create tables using snake_case as requested
+export async function initCertificacoes(db: D1Database) {
+  // Ensure table certificacoes exists
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS certificacoes (
       id TEXT PRIMARY KEY,
@@ -13,82 +13,6 @@ export async function initDb(db: D1Database) {
       cor TEXT,
       icone TEXT,
       ativa INTEGER NOT NULL DEFAULT 1
-    )
-  `).run();
-
-  await db.prepare(`
-    CREATE TABLE IF NOT EXISTS grupos (
-      id TEXT PRIMARY KEY,
-      nome TEXT NOT NULL,
-      certificacao_id TEXT NOT NULL
-    )
-  `).run();
-
-  await db.prepare(`
-    CREATE TABLE IF NOT EXISTS itens (
-      id INTEGER PRIMARY KEY,
-      certificacao_id TEXT NOT NULL,
-      grupo_id TEXT NOT NULL,
-      ordem INTEGER NOT NULL,
-      descricao TEXT NOT NULL,
-      critico INTEGER NOT NULL DEFAULT 0,
-      obrigatorio INTEGER NOT NULL DEFAULT 1,
-      ativo INTEGER NOT NULL DEFAULT 1
-    )
-  `).run();
-
-  await db.prepare(`
-    CREATE TABLE IF NOT EXISTS avaliadores (
-      id TEXT PRIMARY KEY,
-      nome TEXT NOT NULL,
-      perfil TEXT NOT NULL,
-      cidade_base TEXT NOT NULL,
-      status TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    )
-  `).run();
-
-  await db.prepare(`
-    CREATE TABLE IF NOT EXISTS tecnicos (
-      id TEXT PRIMARY KEY,
-      nome TEXT NOT NULL,
-      matricula TEXT NOT NULL,
-      empresa TEXT NOT NULL,
-      cidade_base TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    )
-  `).run();
-
-  await db.prepare(`
-    CREATE TABLE IF NOT EXISTS avaliacoes (
-      id TEXT PRIMARY KEY,
-      tecnico_id TEXT,
-      nome_tecnico TEXT NOT NULL,
-      matricula TEXT NOT NULL,
-      empresa TEXT NOT NULL,
-      cidade_base TEXT NOT NULL,
-      avaliador_id TEXT,
-      nome_cq TEXT NOT NULL,
-      data TEXT NOT NULL,
-      certificacao_id TEXT NOT NULL,
-      status TEXT NOT NULL,
-      resultado TEXT,
-      observacao TEXT,
-      nota_teorica REAL,
-      nota_pratica REAL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    )
-  `).run();
-
-  await db.prepare(`
-    CREATE TABLE IF NOT EXISTS respostas (
-      id TEXT PRIMARY KEY,
-      avaliacao_id TEXT NOT NULL,
-      item_id INTEGER NOT NULL,
-      resposta TEXT NOT NULL
     )
   `).run();
 
@@ -132,6 +56,96 @@ export async function initDb(db: D1Database) {
       ).bind(cert.id, cert.nome, cert.descricao, cert.perfil_permitido, cert.cor, cert.icone, cert.ativa).run();
     }
   }
+}
+
+export async function initDb(db: D1Database) {
+  // 1. Initialize Certificacoes
+  await initCertificacoes(db);
+
+  // 2. Initialize Grupos
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS grupos (
+      id TEXT PRIMARY KEY,
+      nome TEXT NOT NULL,
+      certificacao_id TEXT NOT NULL
+    )
+  `).run();
+
+  // 3. Initialize Itens
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS itens (
+      id INTEGER PRIMARY KEY,
+      certificacao_id TEXT NOT NULL,
+      grupo_id TEXT NOT NULL,
+      ordem INTEGER NOT NULL,
+      descricao TEXT NOT NULL,
+      critico INTEGER NOT NULL DEFAULT 0,
+      obrigatorio INTEGER NOT NULL DEFAULT 1,
+      ativo INTEGER NOT NULL DEFAULT 1
+    )
+  `).run();
+
+  // 4. Initialize Avaliadores
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS avaliadores (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nome TEXT NOT NULL,
+      perfil TEXT NOT NULL,
+      cidade TEXT,
+      base TEXT,
+      cidade_base TEXT,
+      ativo INTEGER DEFAULT 1,
+      status TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `).run();
+
+  // 5. Initialize Tecnicos
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS tecnicos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nome TEXT NOT NULL,
+      matricula TEXT NOT NULL UNIQUE,
+      empresa TEXT NOT NULL,
+      cidade_base TEXT NOT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `).run();
+
+  // 6. Initialize Avaliacoes
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS avaliacoes (
+      id TEXT PRIMARY KEY,
+      tecnico_id TEXT,
+      nome_tecnico TEXT NOT NULL,
+      matricula TEXT NOT NULL,
+      empresa TEXT NOT NULL,
+      cidade_base TEXT NOT NULL,
+      avaliador_id TEXT,
+      nome_cq TEXT NOT NULL,
+      data TEXT NOT NULL,
+      certificacao_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      resultado TEXT,
+      observacao TEXT,
+      nota_teorica REAL,
+      nota_pratica REAL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `).run();
+
+  // 7. Initialize Respostas
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS respostas (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      avaliacao_id TEXT NOT NULL,
+      item_id INTEGER NOT NULL,
+      resposta TEXT NOT NULL
+    )
+  `).run();
 
   // Seed avaliadores if empty
   const avCountRes = await db.prepare("SELECT COUNT(*) as count FROM avaliadores").first();
@@ -139,40 +153,41 @@ export async function initDb(db: D1Database) {
   if (avCount === 0) {
     const defaultAvaliadores = [
       {
-        id: 'cq-1',
         nome: 'Pedro Henrique Santos',
         perfil: 'CQ',
         cidade_base: 'São Paulo - Base Leste',
-        status: 'Ativo'
+        status: 'ATIVO'
       },
       {
-        id: 'cq-2',
         nome: 'Juliana Mendes Silva',
         perfil: 'CQ',
         cidade_base: 'Campinas - Base Norte',
-        status: 'Ativo'
+        status: 'ATIVO'
       },
       {
-        id: 'cq-3',
         nome: 'Rodrigo Antunes Costa',
         perfil: 'CQ',
         cidade_base: 'Rio de Janeiro - Base Sul',
-        status: 'Inativo'
+        status: 'INATIVO'
       },
       {
-        id: 'cq-4',
         nome: 'Thiago Anderson',
         perfil: 'Analista',
         cidade_base: 'São Paulo - Base Centro',
-        status: 'Ativo'
+        status: 'ATIVO'
       }
     ];
 
     for (const av of defaultAvaliadores) {
-      const now = new Date().toISOString();
+      const parts = (av.cidade_base || '').split(' - ');
+      const cidade = parts[0] || '';
+      const base = parts[1] || '';
+      const statusUpper = av.status;
+      const ativoVal = statusUpper === 'ATIVO' ? 1 : 0;
+
       await db.prepare(
-        "INSERT INTO avaliadores (id, nome, perfil, cidade_base, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-      ).bind(av.id, av.nome, av.perfil, av.cidade_base, av.status, now, now).run();
+        "INSERT INTO avaliadores (nome, perfil, cidade, base, cidade_base, ativo, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+      ).bind(av.nome, av.perfil, cidade, base, av.cidade_base, ativoVal, statusUpper).run();
     }
   }
 
@@ -182,21 +197,18 @@ export async function initDb(db: D1Database) {
   if (tecCount === 0) {
     const defaultTecnicos = [
       {
-        id: 'tec-1',
         nome: 'Marcos Vinícius Silva',
         matricula: 'TR551234',
         empresa: 'Claro S/A (Próprio)',
         cidade_base: 'São Paulo - Base Leste'
       },
       {
-        id: 'tec-2',
         nome: 'Ana Clara Oliveira',
         matricula: 'TR884321',
         empresa: 'Icomon Tecnologia',
         cidade_base: 'São Paulo - Base Leste'
       },
       {
-        id: 'tec-3',
         nome: 'Gabriel Henrique Santos',
         matricula: 'TR992211',
         empresa: 'Serede S/A',
@@ -205,10 +217,9 @@ export async function initDb(db: D1Database) {
     ];
 
     for (const tec of defaultTecnicos) {
-      const now = new Date().toISOString();
       await db.prepare(
-        "INSERT INTO tecnicos (id, nome, matricula, empresa, cidade_base, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-      ).bind(tec.id, tec.nome, tec.matricula, tec.empresa, tec.cidade_base, now, now).run();
+        "INSERT INTO tecnicos (nome, matricula, empresa, cidade_base, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+      ).bind(tec.nome, tec.matricula, tec.empresa, tec.cidade_base).run();
     }
   }
 
@@ -279,7 +290,7 @@ export async function initDb(db: D1Database) {
       { id: 119, pergunta: 'Verificou se o decoder possui Status e IP corretamente?', critico: false, grupo: 'Decodificador' },
       { id: 120, pergunta: 'Configurou e explicou a utilização básica do controle remoto?', critico: false, grupo: 'Decodificador' },
       { id: 121, pergunta: 'Retirou bloqueio por idade e alterou senha de compra?', critico: false, grupo: 'Decodificador' },
-      { id: 122, pergunta: 'Configurou corretamente TV e Decoder (HDMI, resolução, formato de exibição e sistema de áudio)?', critico: true, grupo: 'Decodificador' },
+      { id: 122, pergunta: 'Configurou corretamente TV e Decoder (HDMI, resolução, formato de exibição e sistema de áudio)?', critico: true, group: 'Decodificador' },
       { id: 123, pergunta: 'Explicou os recursos de gravação (Agendar gravação)?', critico: false, grupo: 'Decodificador' },
       { id: 124, pergunta: 'Demonstrou o Replay TV?', critico: false, grupo: 'Decodificador' },
       { id: 125, pergunta: 'Explicou a função Autodesligar?', critico: false, grupo: 'Decodificador' },
@@ -323,7 +334,7 @@ export async function initDb(db: D1Database) {
       { id: 214, pergunta: 'Instalou corretamente o Cable Isolator?', critico: false, grupo: 'Instalação Física' },
       { id: 215, pergunta: 'Aplicou corretamente o torque nas conexões do MDU, passivos e equipamentos?', critico: false, grupo: 'Instalação Física' },
       { id: 216, pergunta: 'Explicou corretamente a importância do Mini Isolator?', critico: false, grupo: 'Instalação Física' },
-      { id: 217, pergunta: 'Executou corretamente a distribuição do sinal do cabo coaxial?', critico: false, group: 'Instalação Física' },
+      { id: 217, pergunta: 'Executou corretamente a distribuição do sinal do cabo coaxial?', critico: false, grupo: 'Instalação Física' },
       { id: 218, pergunta: 'Efetuou o reset de fábrica do decoder e realizou a configuração da base?', critico: false, grupo: 'Decodificador' },
       { id: 219, pergunta: 'Todos os pontos de TV ficaram com níveis de sinal dentro do padrão?', critico: false, grupo: 'Decodificador' },
       { id: 220, pergunta: 'Configurou e explicou a utilização do controle remoto?', critico: false, grupo: 'Decodificador' },
@@ -388,12 +399,12 @@ export async function initDb(db: D1Database) {
     const seedEvals = [
       {
         id: 'seed-1',
-        tecnico_id: 'tec-1',
+        tecnico_id: '1',
         nome_tecnico: 'Marcos Vinícius Silva',
         matricula: 'TR551234',
         empresa: 'Claro S/A (Próprio)',
         cidade_base: 'São Paulo - Base Leste',
-        avaliador_id: 'cq-1',
+        avaliador_id: '1',
         nome_cq: 'Pedro Henrique Santos',
         data: '2026-06-25',
         certificacao_id: 'GPON Veterano',
@@ -428,12 +439,12 @@ export async function initDb(db: D1Database) {
       },
       {
         id: 'seed-2',
-        tecnico_id: 'tec-2',
+        tecnico_id: '2',
         nome_tecnico: 'Ana Clara Oliveira',
         matricula: 'TR884321',
         empresa: 'Icomon Tecnologia',
         cidade_base: 'São Paulo - Base Leste',
-        avaliador_id: 'cq-1',
+        avaliador_id: '1',
         nome_cq: 'Pedro Henrique Santos',
         data: todayStr,
         certificacao_id: 'GPON Capacitação',
@@ -448,12 +459,12 @@ export async function initDb(db: D1Database) {
       },
       {
         id: 'seed-3',
-        tecnico_id: 'tec-3',
+        tecnico_id: '3',
         nome_tecnico: 'Gabriel Henrique Santos',
         matricula: 'TR992211',
         empresa: 'Serede S/A',
         cidade_base: 'São Paulo - Base Leste',
-        avaliador_id: 'cq-1',
+        avaliador_id: '1',
         nome_cq: 'Pedro Henrique Santos',
         data: todayStr,
         certificacao_id: 'HFC Capacitação',
@@ -470,6 +481,16 @@ export async function initDb(db: D1Database) {
 
     const stmt = db.prepare(
       `INSERT INTO avaliacoes (
+        id, tecnico_id, nome_tecnico, matricula, empresa, city_base,
+        cidade_base, avaliador_id, nome_cq, data, certificacao_id, status, resultado,
+        observacao, nota_teorica, nota_pratica, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+
+    // Wait! Let's check table definition: we used `cidade_base` instead of `city_base`.
+    // Let's replace `city_base` with `cidade_base` in the statement
+    const stmtCorrect = db.prepare(
+      `INSERT INTO avaliacoes (
         id, tecnico_id, nome_tecnico, matricula, empresa, cidade_base, 
         avaliador_id, nome_cq, data, certificacao_id, status, resultado, 
         observacao, nota_teorica, nota_pratica, created_at, updated_at
@@ -477,7 +498,7 @@ export async function initDb(db: D1Database) {
     );
 
     for (const e of seedEvals) {
-      await stmt.bind(
+      await stmtCorrect.bind(
         e.id, e.tecnico_id, e.nome_tecnico, e.matricula, e.empresa, e.cidade_base,
         e.avaliador_id, e.nome_cq, e.data, e.certificacao_id, e.status, e.resultado,
         e.observacao, e.nota_teorica, e.nota_pratica, e.createdAt, e.updatedAt
@@ -485,9 +506,10 @@ export async function initDb(db: D1Database) {
 
       for (const [itemIdStr, resVal] of Object.entries(e.responses)) {
         const itemId = parseInt(itemIdStr, 10);
+        // Let's insert into responses without manual ID to ensure auto-increment compatibility!
         await db.prepare(
-          "INSERT INTO respostas (id, avaliacao_id, item_id, resposta) VALUES (?, ?, ?, ?)"
-        ).bind(`${e.id}_${itemId}`, e.id, itemId, resVal).run();
+          "INSERT INTO respostas (avaliacao_id, item_id, resposta) VALUES (?, ?, ?)"
+        ).bind(e.id, itemId, resVal).run();
       }
     }
   }

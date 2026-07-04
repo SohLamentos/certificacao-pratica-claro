@@ -49,10 +49,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       if (data.checklistResponses) {
         for (const [itemIdStr, resVal] of Object.entries(data.checklistResponses)) {
           const itemId = parseInt(itemIdStr, 10);
-          const respId = `${id}_${itemId}`;
           await env.DB.prepare(
-            "INSERT INTO respostas (id, avaliacao_id, item_id, resposta) VALUES (?, ?, ?, ?)"
-          ).bind(respId, id, itemId, resVal).run();
+            "INSERT INTO respostas (avaliacao_id, item_id, resposta) VALUES (?, ?, ?)"
+          ).bind(id, itemId, resVal).run();
         }
       }
 

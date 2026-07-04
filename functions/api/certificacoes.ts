@@ -1,8 +1,8 @@
-import { initDb, Env } from './_db';
+import { initDb, initCertificacoes, Env } from './_db';
 
 export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   try {
-    await initDb(env.DB);
+    await initCertificacoes(env.DB);
     const { results } = await env.DB.prepare(
       "SELECT * FROM certificacoes ORDER BY id"
     ).all();

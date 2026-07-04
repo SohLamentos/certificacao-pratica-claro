@@ -16,14 +16,22 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
     if (request.method === 'PUT') {
       const data = await request.json() as any;
+      const parts = (data.cidadeBase || '').split(' - ');
+      const cidade = parts[0] || '';
+      const base = parts[1] || '';
+      const statusUpper = (data.status || 'Ativo').toUpperCase() === 'INATIVO' ? 'INATIVO' : 'ATIVO';
+      const ativoVal = statusUpper === 'ATIVO' ? 1 : 0;
+
       await env.DB.prepare(
-        "UPDATE avaliadores SET nome = ?, perfil = ?, cidade_base = ?, status = ?, updated_at = ? WHERE id = ?"
+        "UPDATE avaliadores SET nome = ?, perfil = ?, cidade = ?, base = ?, cidade_base = ?, ativo = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
       ).bind(
         data.nome,
         data.perfil,
-        data.cidadeBase,
-        data.status,
-        data.updatedAt || new Date().toISOString(),
+        cidade,
+        base,
+        data.cidadeBase || '',
+        ativoVal,
+        statusUpper,
         id
       ).run();
 

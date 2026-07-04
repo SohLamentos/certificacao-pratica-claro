@@ -69,17 +69,13 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     // Check if tecnico exists, otherwise insert
     const tecExists = await env.DB.prepare("SELECT 1 FROM tecnicos WHERE matricula = ?").bind(data.matricula).first();
     if (!tecExists) {
-      const tecId = `tec_${Date.now()}`;
       await env.DB.prepare(
-        "INSERT INTO tecnicos (id, nome, matricula, empresa, cidade_base, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO tecnicos (nome, matricula, empresa, cidade_base, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
       ).bind(
-        tecId,
         data.nomeTecnico,
         data.matricula,
         data.empresa,
-        data.cidadeBase,
-        data.createdAt || new Date().toISOString(),
-        data.updatedAt || new Date().toISOString()
+        data.cidadeBase
       ).run();
     }
 
@@ -113,10 +109,9 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     if (data.checklistResponses) {
       for (const [itemIdStr, resVal] of Object.entries(data.checklistResponses)) {
         const itemId = parseInt(itemIdStr, 10);
-        const respId = `${data.id}_${itemId}`;
         await env.DB.prepare(
-          "INSERT INTO respostas (id, avaliacao_id, item_id, resposta) VALUES (?, ?, ?, ?)"
-        ).bind(respId, data.id, itemId, resVal).run();
+          "INSERT INTO respostas (avaliacao_id, item_id, resposta) VALUES (?, ?, ?)"
+        ).bind(data.id, itemId, resVal).run();
       }
     }
 
