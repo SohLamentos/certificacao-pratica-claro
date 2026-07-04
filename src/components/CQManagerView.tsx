@@ -21,70 +21,36 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
   const [status, setStatus] = useState<'Ativo' | 'Inativo'>('Ativo');
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Load CQs from localStorage on mount
-  useEffect(() => {
-    const saved = localStorage.getItem(LOCAL_STORAGE_CQ_KEY);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        // Migrate old items that don't have a profile yet, defaulting them to 'CQ'
-        const fixed = parsed.map((item: any) => ({
-          ...item,
-          perfil: item.perfil || 'CQ'
-        }));
-        setCqs(fixed);
-      } catch (e) {
-        console.error('Error loading CQs', e);
-      }
-    } else {
-      // Seed some default active CQs to make the experience smooth initially
-      const defaultCQs: CQ[] = [
-        {
-          id: 'cq-1',
-          nome: 'Pedro Henrique Santos',
-          perfil: 'CQ',
-          cidadeBase: 'São Paulo - Base Leste',
-          status: 'Ativo',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-        {
-          id: 'cq-2',
-          nome: 'Juliana Mendes Silva',
-          perfil: 'CQ',
-          cidadeBase: 'Campinas - Base Norte',
-          status: 'Ativo',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-        {
-          id: 'cq-3',
-          nome: 'Rodrigo Antunes Costa',
-          perfil: 'CQ',
-          cidadeBase: 'Rio de Janeiro - Base Sul',
-          status: 'Inativo',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-        {
-          id: 'cq-4',
-          nome: 'Thiago Anderson',
-          perfil: 'Analista',
-          cidadeBase: 'São Paulo - Base Centro',
-          status: 'Ativo',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        }
-      ];
-      setCqs(defaultCQs);
-      localStorage.setItem(LOCAL_STORAGE_CQ_KEY, JSON.stringify(defaultCQs));
-    }
-  }, []);
+  const [evaluations, setEvaluations] = useState<any[]>([]);
 
-  const saveToLocalStorage = (updatedCqs: CQ[]) => {
-    setCqs(updatedCqs);
-    localStorage.setItem(LOCAL_STORAGE_CQ_KEY, JSON.stringify(updatedCqs));
+  const fetchCQs = async () => {
+    try {
+      const res = await fetch('/api/cqs');
+      if (res.ok) {
+        const data = await res.json();
+        setCqs(data);
+      }
+    } catch (e) {
+      console.error('Failed to fetch cqs', e);
+    }
   };
+
+  const fetchEvaluations = async () => {
+    try {
+      const res = await fetch('/api/avaliacoes');
+      if (res.ok) {
+        const data = await res.json();
+        setEvaluations(data);
+      }
+    } catch (e) {
+      console.error('Failed to fetch evaluations', e);
+    }
+  };
+
+  useEffect(() => {
+    fetchCQs();
+    fetchEvaluations();
+  }, []);
 
   const resetForm = () => {
     setNome('');
@@ -120,52 +86,69 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validateForm()) return;
 
     const now = new Date().toISOString();
-    let updated: CQ[];
 
-    if (editingId) {
-      // Edit
-      updated = cqs.map(cq => 
-        cq.id === editingId 
-          ? { ...cq, nome: nome.trim(), perfil, cidadeBase: cidadeBase.trim(), status, updatedAt: now }
-          : cq
-      );
-    } else {
-      // Create new
-      const newCQ: CQ = {
-        id: 'cq-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
-        nome: nome.trim(),
-        perfil,
-        cidadeBase: cidadeBase.trim(),
-        status,
-        createdAt: now,
-        updatedAt: now,
-      };
-      updated = [newCQ, ...cqs];
+    try {
+      if (editingId) {
+        // Edit existing CQ in database
+        const updatedCQ = {
+          nome: nome.trim(),
+          perfil,
+          cidadeBase: cidadeBase.trim(),
+          status,
+          updatedAt: now
+        };
+
+        const res = await fetch(`/api/cqs/${editingId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatedCQ)
+        });
+
+        if (res.ok) {
+          await fetchCQs();
+        } else {
+          alert('Erro ao atualizar avaliador.');
+        }
+      } else {
+        // Create new CQ in database
+        const newCQ: CQ = {
+          id: 'cq-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+          nome: nome.trim(),
+          perfil,
+          cidadeBase: cidadeBase.trim(),
+          status,
+          createdAt: now,
+          updatedAt: now,
+        };
+
+        const res = await fetch('/api/cqs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(newCQ)
+        });
+
+        if (res.ok) {
+          await fetchCQs();
+        } else {
+          alert('Erro ao criar novo avaliador.');
+        }
+      }
+    } catch (err) {
+      console.error('Error saving CQ:', err);
+      alert('Erro de rede ao salvar avaliador.');
     }
 
-    saveToLocalStorage(updated);
     resetForm();
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     const targetCQ = cqs.find(cq => cq.id === id);
     if (!targetCQ) return;
-
-    // Check for linked evaluations in local storage
-    const savedEvals = localStorage.getItem('claro_cq_certificacoes');
-    let evaluations: any[] = [];
-    if (savedEvals) {
-      try {
-        evaluations = JSON.parse(savedEvals);
-      } catch (e) {
-        console.error('Error parsing evaluations', e);
-      }
-    }
 
     const hasLinkedActiveEval = evaluations.some(e => 
       e.nomeCQ === targetCQ.nome && 
@@ -178,12 +161,23 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
     }
 
     if (window.confirm("Deseja realmente excluir este avaliador?")) {
-      const updated = cqs.filter(cq => cq.id !== id);
-      saveToLocalStorage(updated);
+      try {
+        const res = await fetch(`/api/cqs/${id}`, {
+          method: 'DELETE'
+        });
+        if (res.ok) {
+          await fetchCQs();
+        } else {
+          alert('Erro ao excluir avaliador.');
+        }
+      } catch (err) {
+        console.error('Error deleting CQ:', err);
+        alert('Erro ao conectar ao servidor para excluir.');
+      }
     }
   };
 
-  const handleSimulateCQs = () => {
+  const handleSimulateCQs = async () => {
     const names = ['André Luis', 'Gabriela Santos', 'Fabrício Costa', 'Patrícia Oliveira'];
     const bases = ['Porto Alegre - Base Sul', 'Belo Horizonte - Base Centro', 'Salvador - Base Norte', 'Curitiba - Base Sul'];
     const profiles: ('CQ' | 'Analista')[] = ['CQ', 'Analista'];
@@ -200,7 +194,18 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
       updatedAt: new Date().toISOString(),
     };
     
-    saveToLocalStorage([newCQ, ...cqs]);
+    try {
+      const res = await fetch('/api/cqs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newCQ)
+      });
+      if (res.ok) {
+        await fetchCQs();
+      }
+    } catch (e) {
+      console.error('Error simulating CQ:', e);
+    }
   };
 
   return (

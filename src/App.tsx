@@ -33,7 +33,7 @@ import CQIdentificationGate from './components/CQIdentificationGate';
 import AnalistaIdentificationGate from './components/AnalistaIdentificationGate';
 import SettingsView from './components/SettingsView';
 import { Avaliacao, CertificacaoType, AvaliacaoStatus, ChecklistValue, CQ } from './types';
-import { getDynamicChecklistItems, calcularResultadoDinamico } from './data/dynamicChecklist';
+import { getDynamicChecklistItems, calcularResultadoDinamico, setCachedCertificacoes, setCachedChecklistItems } from './data/dynamicChecklist';
 
 const LOCAL_STORAGE_KEY = 'claro_cq_certificacoes';
 
@@ -183,21 +183,48 @@ export default function App() {
   // Toast notifications
   const [toast, setToast] = useState<ToastState | null>(null);
 
-  // Load evaluations from localStorage or seed them on first mount
-  useEffect(() => {
-    const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
-    if (saved) {
-      try {
-        setEvaluations(JSON.parse(saved));
-      } catch (err) {
-        console.error('Failed to parse saved evaluations', err);
-        setEvaluations(SEED_DATA);
+  // Fetch updated evaluations from the D1 API
+  const refreshEvaluations = async () => {
+    try {
+      const res = await fetch('/api/avaliacoes');
+      if (res.ok) {
+        const data = await res.json();
+        setEvaluations(data);
       }
-    } else {
-      // First run, populate with seed data and save
-      setEvaluations(SEED_DATA);
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(SEED_DATA));
+    } catch (e) {
+      console.error('Failed to refresh evaluations', e);
     }
+  };
+
+  // Load certifications, checklist items, and evaluations asynchronously on mount
+  useEffect(() => {
+    const loadAllData = async () => {
+      try {
+        // Fetch Certificações
+        const resCerts = await fetch('/api/certificacoes');
+        if (resCerts.ok) {
+          const certs = await resCerts.json();
+          setCachedCertificacoes(certs);
+        }
+
+        // Fetch Checklist Items
+        const resItems = await fetch('/api/itens');
+        if (resItems.ok) {
+          const items = await resItems.json();
+          setCachedChecklistItems(items);
+        }
+
+        // Fetch Evaluations
+        const resEvals = await fetch('/api/avaliacoes');
+        if (resEvals.ok) {
+          const evals = await resEvals.json();
+          setEvaluations(evals);
+        }
+      } catch (err) {
+        console.error('Failed to load data from D1 database APIs:', err);
+      }
+    };
+    loadAllData();
   }, []);
 
   // Show a floating toast message helper
@@ -239,7 +266,7 @@ export default function App() {
   };
 
   // Save changes (creates new or updates existing)
-  const handleSaveEvaluation = (
+  const handleSaveEvaluation = async (
     formData: {
       nomeTecnico: string;
       matricula: string;
@@ -254,7 +281,6 @@ export default function App() {
     status: AvaliacaoStatus,
     checklistResponses: Record<number, ChecklistValue>
   ) => {
-    let updatedList: Avaliacao[];
     const now = new Date().toISOString();
 
     // Compute results if status is finalized dynamically
@@ -267,39 +293,60 @@ export default function App() {
       resultado = calcularResultadoDinamico(activeItems, checklistResponses, formData.notaTeorica);
     }
 
-    if (editingEvaluation) {
-      // Updating an existing record
-      updatedList = evaluations.map((item) => {
-        if (item.id === editingEvaluation.id) {
-          return {
-            ...item,
-            ...formData,
-            status,
-            checklistResponses,
-            resultado,
-            updatedAt: now
-          };
+    try {
+      if (editingEvaluation) {
+        // Updating an existing record
+        const updatedRecord = {
+          ...editingEvaluation,
+          ...formData,
+          status,
+          checklistResponses,
+          resultado,
+          updatedAt: now
+        };
+
+        const res = await fetch(`/api/avaliacoes/${editingEvaluation.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatedRecord)
+        });
+
+        if (res.ok) {
+          showToast(`Avaliação de ${formData.nomeTecnico} atualizada com sucesso!`, 'success');
+        } else {
+          showToast(`Erro ao atualizar avaliação de ${formData.nomeTecnico}.`, 'error');
         }
-        return item;
-      });
-      showToast(`Avaliação de ${formData.nomeTecnico} atualizada com sucesso!`, 'success');
-    } else {
-      // Creating a brand new record
-      const newRecord: Avaliacao = {
-        id: 'eval-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
-        ...formData,
-        status,
-        checklistResponses,
-        resultado,
-        createdAt: now,
-        updatedAt: now
-      };
-      updatedList = [newRecord, ...evaluations];
-      showToast(`Avaliação de ${formData.nomeTecnico} salva como ${status === 'AGENDADA' ? 'AGENDADA' : status}!`, 'success');
+      } else {
+        // Creating a brand new record
+        const newRecord: Avaliacao = {
+          id: 'eval-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+          ...formData,
+          status,
+          checklistResponses,
+          resultado,
+          createdAt: now,
+          updatedAt: now
+        };
+
+        const res = await fetch('/api/avaliacoes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(newRecord)
+        });
+
+        if (res.ok) {
+          showToast(`Avaliação de ${formData.nomeTecnico} salva como ${status === 'AGENDADA' ? 'AGENDADA' : status}!`, 'success');
+        } else {
+          showToast(`Erro ao criar nova avaliação de ${formData.nomeTecnico}.`, 'error');
+        }
+      }
+      
+      await refreshEvaluations();
+    } catch (err) {
+      console.error('Error saving evaluation to D1:', err);
+      showToast('Erro de rede ao salvar avaliação no D1.', 'error');
     }
 
-    setEvaluations(updatedList);
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updatedList));
     setEditingEvaluation(null);
     
     // Automatically redirect back based on profile
@@ -314,20 +361,54 @@ export default function App() {
   };
 
   // Delete evaluation handler
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = async () => {
     if (!deletingId) return;
 
     const target = evaluations.find(e => e.id === deletingId);
-    const updatedList = evaluations.filter((item) => item.id !== deletingId);
     
-    setEvaluations(updatedList);
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updatedList));
-    
-    if (target) {
-      showToast(`Avaliação de ${target.nomeTecnico} foi excluída.`, 'info');
+    try {
+      const res = await fetch(`/api/avaliacoes/${deletingId}`, {
+        method: 'DELETE'
+      });
+
+      if (res.ok) {
+        if (target) {
+          showToast(`Avaliação de ${target.nomeTecnico} foi excluída.`, 'info');
+        }
+        await refreshEvaluations();
+      } else {
+        showToast('Erro ao excluir avaliação.', 'error');
+      }
+    } catch (err) {
+      console.error('Error deleting evaluation:', err);
+      showToast('Erro ao conectar ao servidor para excluir.', 'error');
     }
     
     setDeletingId(null);
+  };
+
+  // Update evaluation handler (e.g., for theoretical grades in CQ dashboard)
+  const handleUpdateEvaluation = async (updatedEval: Avaliacao) => {
+    try {
+      const res = await fetch(`/api/avaliacoes/${updatedEval.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedEval)
+      });
+      if (res.ok) {
+        if (updatedEval.status === 'FINALIZADA') {
+          showToast(`Avaliação de ${updatedEval.nomeTecnico} finalizada com sucesso!`, 'success');
+        } else {
+          showToast(`Nota teórica de ${updatedEval.nomeTecnico} salva com sucesso!`, 'success');
+        }
+        await refreshEvaluations();
+      } else {
+        showToast('Erro ao atualizar avaliação.', 'error');
+      }
+    } catch (e) {
+      console.error('Failed to update evaluation', e);
+      showToast('Erro de rede ao conectar ao servidor.', 'error');
+    }
   };
 
   // Find the technician name & certification for the delete confirmation modal
@@ -622,16 +703,7 @@ export default function App() {
                     handleSelectCQ(null);
                     handleSelectProfile(null);
                   }}
-                  onUpdateEvaluation={(updatedEval) => {
-                    const updatedList = evaluations.map((item) => item.id === updatedEval.id ? updatedEval : item);
-                    setEvaluations(updatedList);
-                    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updatedList));
-                    if (updatedEval.status === 'FINALIZADA') {
-                      showToast(`Avaliação de ${updatedEval.nomeTecnico} reprovada por nota teórica inferior a 7.`, 'error');
-                    } else {
-                      showToast(`Nota teórica de ${updatedEval.nomeTecnico} salva com sucesso!`, 'success');
-                    }
-                  }}
+                  onUpdateEvaluation={handleUpdateEvaluation}
                 />
               </motion.div>
             )}
@@ -693,16 +765,7 @@ export default function App() {
                       handleSelectAnalista(null);
                       handleSelectProfile(null);
                     }}
-                    onUpdateEvaluation={(updatedEval) => {
-                      const updatedList = evaluations.map((item) => item.id === updatedEval.id ? updatedEval : item);
-                      setEvaluations(updatedList);
-                      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updatedList));
-                      if (updatedEval.status === 'FINALIZADA') {
-                        showToast(`Avaliação de ${updatedEval.nomeTecnico} reprovada por nota teórica inferior a 7.`, 'error');
-                      } else {
-                        showToast(`Nota teórica de ${updatedEval.nomeTecnico} salva com sucesso!`, 'success');
-                      }
-                    }}
+                    onUpdateEvaluation={handleUpdateEvaluation}
                   />
                 </motion.div>
               )

@@ -151,7 +151,19 @@ const defaultHfcCapacitacaoRaw = [
   { id: 250, pergunta: 'Informou sobre o TNPS e solicitou a avaliação do cliente?', critico: false, grupo: 'Atendimento Consultivo / TNPS' }
 ];
 
+let cachedCertificacoes: DynamicCertificacao[] | null = null;
+let cachedChecklistItems: DynamicChecklistItem[] | null = null;
+
+export const setCachedCertificacoes = (certs: DynamicCertificacao[]) => {
+  cachedCertificacoes = certs;
+};
+
+export const setCachedChecklistItems = (items: DynamicChecklistItem[]) => {
+  cachedChecklistItems = items;
+};
+
 export const getDynamicCertificacoes = (): DynamicCertificacao[] => {
+  if (cachedCertificacoes) return cachedCertificacoes;
   const saved = localStorage.getItem('claro_dynamic_certificacoes');
   if (saved) {
     try {
@@ -166,10 +178,12 @@ export const getDynamicCertificacoes = (): DynamicCertificacao[] => {
 };
 
 export const saveDynamicCertificacoes = (certs: DynamicCertificacao[]) => {
+  cachedCertificacoes = certs;
   localStorage.setItem('claro_dynamic_certificacoes', JSON.stringify(certs));
 };
 
 export const getDynamicChecklistItems = (): DynamicChecklistItem[] => {
+  if (cachedChecklistItems) return cachedChecklistItems;
   const saved = localStorage.getItem('claro_dynamic_checklist_items');
   if (saved) {
     try {
@@ -229,6 +243,7 @@ export const getDynamicChecklistItems = (): DynamicChecklistItem[] => {
 };
 
 export const saveDynamicChecklistItems = (items: DynamicChecklistItem[]) => {
+  cachedChecklistItems = items;
   localStorage.setItem('claro_dynamic_checklist_items', JSON.stringify(items));
 };
 
