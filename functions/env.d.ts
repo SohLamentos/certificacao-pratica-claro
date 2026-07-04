@@ -3,6 +3,7 @@ interface D1PreparedStatement {
   run(): Promise<any>;
   all(): Promise<{ results: any[] }>;
   first<T = any>(colName?: string): Promise<T | null>;
+  
 }
 
 interface D1Database {
