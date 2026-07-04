@@ -31,6 +31,8 @@ interface CQAvaliacoesDoDiaProps {
   selectedCQ: CQ;
   onSwitchCQ: () => void;
   onUpdateEvaluation: (evaluation: Avaliacao) => void;
+  selectedDate?: string;
+  onDateChange?: (date: string) => void;
 }
 
 export default function CQAvaliacoesDoDia({ 
@@ -40,10 +42,15 @@ export default function CQAvaliacoesDoDia({
   onSwitchProfile,
   selectedCQ,
   onSwitchCQ,
-  onUpdateEvaluation
+  onUpdateEvaluation,
+  selectedDate: propSelectedDate,
+  onDateChange
 }: CQAvaliacoesDoDiaProps) {
   // Date state: defaults to today's local date (YYYY-MM-DD)
-  const [selectedDate, setSelectedDate] = useState('');
+  const [localDate, setLocalDate] = useState('');
+  const selectedDate = propSelectedDate || localDate;
+  const setSelectedDate = onDateChange || setLocalDate;
+  
   const [cqs, setCqs] = useState<CQ[]>([]);
 
   // Local draft states for theoretical grade inputs
@@ -136,12 +143,19 @@ export default function CQAvaliacoesDoDia({
   };
 
   useEffect(() => {
-    const today = new Date();
-    const year = today.getFullYear();
-    const month = String(today.getMonth() + 1).padStart(2, '0');
-    const day = String(today.getDate()).padStart(2, '0');
-    setSelectedDate(`${year}-${month}-${day}`);
-  }, []);
+    if (!propSelectedDate && !localDate) {
+      const today = new Date();
+      const year = today.getFullYear();
+      const month = String(today.getMonth() + 1).padStart(2, '0');
+      const day = String(today.getDate()).padStart(2, '0');
+      const formatted = `${year}-${month}-${day}`;
+      if (onDateChange) {
+        onDateChange(formatted);
+      } else {
+        setLocalDate(formatted);
+      }
+    }
+  }, [propSelectedDate, localDate, onDateChange]);
 
   // Filter evaluations for the selected date and selected CQ with profile validation
   const filtered = evaluations.filter(e => {

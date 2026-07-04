@@ -3,13 +3,34 @@ import { initDb, Env } from './_db';
 export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   try {
     await initDb(env.DB);
-    const { results } = await env.DB.prepare(`
+    const url = new URL(request.url);
+    const certificacao = url.searchParams.get("certificacao");
+    const certificacaoId = url.searchParams.get("certificacaoId");
+
+    let query = `
       SELECT i.*, c.nome as certificacao_nome, g.nome as grupo_nome
       FROM itens i
       LEFT JOIN certificacoes c ON i.certificacao_id = c.id
       LEFT JOIN grupos g ON i.grupo_id = g.id
-      ORDER BY i.ordem ASC
-    `).all();
+    `;
+    const bindParams: any[] = [];
+    const conditions: string[] = [];
+
+    if (certificacao) {
+      conditions.push("(c.nome = ? OR c.id = ?)");
+      bindParams.push(certificacao, certificacao);
+    } else if (certificacaoId) {
+      conditions.push("(c.id = ? OR c.nome = ?)");
+      bindParams.push(certificacaoId, certificacaoId);
+    }
+
+    if (conditions.length > 0) {
+      query += " WHERE " + conditions.join(" AND ");
+    }
+
+    query += " ORDER BY i.ordem ASC";
+
+    const { results } = await env.DB.prepare(query).bind(...bindParams).all();
 
     const mapped = results.map((row: any) => ({
       id: row.id,

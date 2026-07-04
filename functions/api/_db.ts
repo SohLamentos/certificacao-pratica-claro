@@ -82,7 +82,13 @@ export async function initCertificacoes(db: D1Database) {
   }
 }
 
+let dbInitialized = false;
+
 export async function initDb(db: D1Database) {
+  if (dbInitialized) {
+    return;
+  }
+
   // 1. Initialize Certificacoes
   await initCertificacoes(db);
 
@@ -170,6 +176,15 @@ export async function initDb(db: D1Database) {
       resposta TEXT NOT NULL
     )
   `).run();
+
+  // 8. Create Indexes
+  await db.prepare("CREATE INDEX IF NOT EXISTS idx_avaliacoes_data ON avaliacoes(data)").run();
+  await db.prepare("CREATE INDEX IF NOT EXISTS idx_avaliacoes_status ON avaliacoes(status)").run();
+  await db.prepare("CREATE INDEX IF NOT EXISTS idx_avaliacoes_certificacao_id ON avaliacoes(certificacao_id)").run();
+  await db.prepare("CREATE INDEX IF NOT EXISTS idx_itens_certificacao_id ON itens(certificacao_id)").run();
+  await db.prepare("CREATE INDEX IF NOT EXISTS idx_itens_grupo_id ON itens(grupo_id)").run();
+  await db.prepare("CREATE INDEX IF NOT EXISTS idx_grupos_certificacao_id ON grupos(certificacao_id)").run();
+  await db.prepare("CREATE INDEX IF NOT EXISTS idx_tecnicos_matricula ON tecnicos(matricula)").run();
 
   // Seed avaliadores if empty
   const avCountRes = await db.prepare("SELECT COUNT(*) as count FROM avaliadores").first();
@@ -579,4 +594,6 @@ export async function initDb(db: D1Database) {
       }
     }
   }
+
+  dbInitialized = true;
 }

@@ -18,7 +18,8 @@ import {
   Settings,
   LogOut,
   Menu,
-  X
+  X,
+  RefreshCw
 } from 'lucide-react';
 
 import Header from './components/Header';
@@ -174,6 +175,14 @@ export default function App() {
     setIsPerformingCert(false);
   };
   const [evaluations, setEvaluations] = useState<Avaliacao[]>([]);
+  const [selectedDashboardDate, setSelectedDashboardDate] = useState<string>(() => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  });
+  const [isSaving, setIsSaving] = useState(false);
   
   // Modals / Overlays
   const [editingEvaluation, setEditingEvaluation] = useState<Avaliacao | null>(null);
@@ -183,10 +192,29 @@ export default function App() {
   // Toast notifications
   const [toast, setToast] = useState<ToastState | null>(null);
 
-  // Fetch updated evaluations from the D1 API
+  // Fetch updated evaluations from the D1 API based on view context
   const refreshEvaluations = async () => {
     try {
-      const res = await fetch('/api/avaliacoes');
+      let url = '/api/avaliacoes';
+      const params = new URLSearchParams();
+      if (currentView === 'home' || currentView === 'realizar') {
+        if (currentProfile === 'cq') {
+          params.append('data', selectedDashboardDate);
+        } else {
+          params.append('limit', '20');
+        }
+      } else if (currentView === 'historico') {
+        // No filter for full history
+      } else {
+        params.append('limit', '20');
+      }
+
+      const queryStr = params.toString();
+      if (queryStr) {
+        url += `?${queryStr}`;
+      }
+
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         setEvaluations(data);
@@ -196,7 +224,7 @@ export default function App() {
     }
   };
 
-  // Load certifications, checklist items, and evaluations asynchronously on mount
+  // Load certifications and evaluations asynchronously (reactive to profile, view and selected dashboard date)
   useEffect(() => {
     const loadAllData = async () => {
       try {
@@ -207,15 +235,29 @@ export default function App() {
           setCachedCertificacoes(certs);
         }
 
-        // Fetch Checklist Items
-        const resItems = await fetch('/api/itens');
-        if (resItems.ok) {
-          const items = await resItems.json();
-          setCachedChecklistItems(items);
-        }
+        // Note: DO NOT fetch all items here. They are loaded lazily in FormView when a certification is chosen!
 
         // Fetch Evaluations
-        const resEvals = await fetch('/api/avaliacoes');
+        let url = '/api/avaliacoes';
+        const params = new URLSearchParams();
+        if (currentView === 'home' || currentView === 'realizar') {
+          if (currentProfile === 'cq') {
+            params.append('data', selectedDashboardDate);
+          } else {
+            params.append('limit', '20');
+          }
+        } else if (currentView === 'historico') {
+          // No parameters, fetches full history
+        } else {
+          params.append('limit', '20');
+        }
+
+        const queryStr = params.toString();
+        if (queryStr) {
+          url += `?${queryStr}`;
+        }
+
+        const resEvals = await fetch(url);
         if (resEvals.ok) {
           const evals = await resEvals.json();
           setEvaluations(evals);
@@ -225,7 +267,7 @@ export default function App() {
       }
     };
     loadAllData();
-  }, []);
+  }, [currentProfile, selectedDashboardDate, currentView]);
 
   // Show a floating toast message helper
   const showToast = (message: string, type: 'success' | 'info' | 'error' = 'success') => {
@@ -293,6 +335,7 @@ export default function App() {
       resultado = calcularResultadoDinamico(activeItems, checklistResponses, formData.notaTeorica);
     }
 
+    setIsSaving(true);
     try {
       if (editingEvaluation) {
         // Updating an existing record
@@ -345,6 +388,8 @@ export default function App() {
     } catch (err) {
       console.error('Error saving evaluation to D1:', err);
       showToast('Erro de rede ao salvar avaliação no D1.', 'error');
+    } finally {
+      setIsSaving(false);
     }
 
     setEditingEvaluation(null);
@@ -691,6 +736,8 @@ export default function App() {
                 <CQAvaliacoesDoDia
                   evaluations={evaluations}
                   selectedCQ={selectedCQ}
+                  selectedDate={selectedDashboardDate}
+                  onDateChange={setSelectedDashboardDate}
                   onSelectEvaluation={(evalObj) => {
                     setEditingEvaluation(evalObj);
                     setCurrentView('nova');
@@ -752,6 +799,8 @@ export default function App() {
                   <CQAvaliacoesDoDia
                     evaluations={evaluations}
                     selectedCQ={selectedAnalista}
+                    selectedDate={selectedDashboardDate}
+                    onDateChange={setSelectedDashboardDate}
                     onSelectEvaluation={(evalObj) => {
                       setEditingEvaluation(evalObj);
                       setIsPerformingCert(true);
@@ -932,6 +981,28 @@ export default function App() {
                 <p className="text-sm font-semibold text-white leading-tight">
                   {toast.message}
                 </p>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Global Saving/Loading Overlay */}
+      <AnimatePresence>
+        {isSaving && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-900/40 backdrop-blur-[2px] z-50 flex items-center justify-center"
+          >
+            <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-xl flex flex-col items-center space-y-4 max-w-xs text-center">
+              <div className="relative w-12 h-12 flex items-center justify-center">
+                <RefreshCw className="animate-spin text-claro-red" size={28} />
+              </div>
+              <div>
+                <h4 className="text-sm font-black text-claro-dark">Salvando Avaliação</h4>
+                <p className="text-xs text-slate-500 mt-1">Aguarde, gravando os dados no Cloudflare D1...</p>
               </div>
             </div>
           </motion.div>

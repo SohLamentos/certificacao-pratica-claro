@@ -33,7 +33,8 @@ import {
   getDynamicChecklistItems, 
   getDynamicCertificacoes,
   getGroupsForCertificacao,
-  calcularResultadoDinamico
+  calcularResultadoDinamico,
+  setCachedChecklistItems
 } from '../data/dynamicChecklist';
 
 interface FormViewProps {
@@ -94,10 +95,45 @@ export default function FormView({ onSave, onCancel, initialData, profile }: For
 
   // CQs list state for scheduling
   const [cqs, setCqs] = useState<CQ[]>([]);
+  const [tecnicos, setTecnicos] = useState<any[]>([]);
+  const [loadingTecnicos, setLoadingTecnicos] = useState(false);
+  const [showTecnicoSuggestions, setShowTecnicoSuggestions] = useState(false);
+  const [loadingCqs, setLoadingCqs] = useState(false);
+  const [showCqSuggestions, setShowCqSuggestions] = useState(false);
+  const [loadingItems, setLoadingItems] = useState(false);
 
   // Dynamic certifications state
   const [dynamicCerts, setDynamicCerts] = useState<DynamicCertificacao[]>([]);
   const [certificacaoPerfilRules, setCertificacaoPerfilRules] = useState<Record<string, PerfilPermitido>>({});
+
+  const fetchChecklistItemsForCert = async (certName: string) => {
+    if (!certName) return;
+    setLoadingItems(true);
+    try {
+      const res = await fetch(`/api/itens?certificacao=${encodeURIComponent(certName)}`);
+      if (res.ok) {
+        const items = await res.json();
+        const currentItems = getDynamicChecklistItems();
+        const filtered = currentItems.filter(i => i.certificacao !== certName);
+        const mapped = items.map((item: any) => ({
+          id: Number(item.id),
+          certificacao: item.certificacao || certName,
+          grupo: item.grupo,
+          ordem: Number(item.ordem),
+          descricao: item.descricao,
+          critico: item.critico === 1 || item.critico === true,
+          obrigatorio: item.obrigatorio === 1 || item.obrigatorio === true || item.critico === 1 || item.critico === true,
+          ativo: item.ativo === 1 || item.ativo === true
+        }));
+        const merged = [...filtered, ...mapped];
+        setCachedChecklistItems(merged);
+      }
+    } catch (err) {
+      console.error('Failed to fetch items for certification:', err);
+    } finally {
+      setLoadingItems(false);
+    }
+  };
 
   // Load certification profile configuration rules and active certs
   useEffect(() => {
@@ -144,64 +180,57 @@ export default function FormView({ onSave, onCancel, initialData, profile }: For
     }
   };
 
-  // Load CQs from localStorage on mount
+  // Lazy load CQs and Technicians from D1 on mount (when FormView opens!)
   useEffect(() => {
-    const saved = localStorage.getItem('claro_cq_cadastrados');
-    if (saved) {
+    const loadCqsAndTecnicos = async () => {
+      setLoadingCqs(true);
+      setLoadingTecnicos(true);
+      
       try {
-        const parsed = JSON.parse(saved);
-        // Ensure legacy CQs get a default profile 'CQ' if missing
-        const fixed = parsed.map((item: any) => ({
-          ...item,
-          perfil: item.perfil || 'CQ'
-        }));
-        setCqs(fixed);
-      } catch (e) {
-        console.error('Error loading CQs in FormView', e);
-      }
-    } else {
-      const defaultCQs: CQ[] = [
-        {
-          id: 'cq-1',
-          nome: 'Pedro Henrique Santos',
-          perfil: 'CQ',
-          cidadeBase: 'São Paulo - Base Leste',
-          status: 'Ativo',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-        {
-          id: 'cq-2',
-          nome: 'Juliana Mendes Silva',
-          perfil: 'CQ',
-          cidadeBase: 'Campinas - Base Norte',
-          status: 'Ativo',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-        {
-          id: 'cq-3',
-          nome: 'Rodrigo Antunes Costa',
-          perfil: 'CQ',
-          cidadeBase: 'Rio de Janeiro - Base Sul',
-          status: 'Inativo',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-        {
-          id: 'cq-4',
-          nome: 'Thiago Anderson',
-          perfil: 'Analista',
-          cidadeBase: 'São Paulo - Base Centro',
-          status: 'Ativo',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
+        const resCqs = await fetch('/api/cqs');
+        if (resCqs.ok) {
+          const data = await resCqs.json();
+          setCqs(data);
+          localStorage.setItem('claro_cq_cadastrados', JSON.stringify(data));
+        } else {
+          // Fallback to local storage if API fails
+          const saved = localStorage.getItem('claro_cq_cadastrados');
+          if (saved) {
+            setCqs(JSON.parse(saved));
+          }
         }
-      ];
-      setCqs(defaultCQs);
-      localStorage.setItem('claro_cq_cadastrados', JSON.stringify(defaultCQs));
-    }
+      } catch (err) {
+        console.error('Error fetching CQs in FormView:', err);
+        const saved = localStorage.getItem('claro_cq_cadastrados');
+        if (saved) {
+          try { setCqs(JSON.parse(saved)); } catch (e) {}
+        }
+      } finally {
+        setLoadingCqs(false);
+      }
+
+      try {
+        const resTec = await fetch('/api/tecnicos');
+        if (resTec.ok) {
+          const data = await resTec.json();
+          setTecnicos(data);
+        }
+      } catch (err) {
+        console.error('Error fetching technicians in FormView:', err);
+      } finally {
+        setLoadingTecnicos(false);
+      }
+    };
+
+    loadCqsAndTecnicos();
   }, []);
+
+  // Fetch checklist items if editing evaluation has selected certification
+  useEffect(() => {
+    if (initialData?.tipoCertificacao) {
+      fetchChecklistItemsForCert(initialData.tipoCertificacao);
+    }
+  }, [initialData]);
 
   // Initialize form if editing
   useEffect(() => {
@@ -251,7 +280,7 @@ export default function FormView({ onSave, onCancel, initialData, profile }: For
   }, [initialData, profile]);
 
   // When changing certification, clear checklist or reset
-  const handleCertificacaoChange = (cert: CertificacaoType) => {
+  const handleCertificacaoChange = async (cert: CertificacaoType) => {
     setTipoCertificacao(cert);
     setActiveHFCGroupId(1);
     if (cert !== 'GPON Veterano' && cert !== 'HFC Capacitação') {
@@ -260,6 +289,10 @@ export default function FormView({ onSave, onCancel, initialData, profile }: For
       setChecklistResponses(initialData.checklistResponses || {});
     } else {
       setChecklistResponses({});
+    }
+
+    if (cert) {
+      await fetchChecklistItemsForCert(cert);
     }
 
     // Dynamic filtering of CQs: check if current CQ is valid for the new cert's rule
@@ -930,7 +963,7 @@ export default function FormView({ onSave, onCancel, initialData, profile }: For
 
               <div className="bg-white rounded-3xl border border-claro-border p-6 shadow-sm space-y-4">
                 {/* Nome do Técnico */}
-                <div className="space-y-1.5" id="field-nomeTecnico">
+                <div className="space-y-1.5 relative" id="field-nomeTecnico">
                   <label className="block text-xs font-black text-slate-700 uppercase tracking-wider">
                     Nome do Técnico <span className="text-claro-red">*</span>
                   </label>
@@ -942,18 +975,55 @@ export default function FormView({ onSave, onCancel, initialData, profile }: For
                       type="text"
                       placeholder="Nome completo do técnico"
                       value={nomeTecnico}
-                      onChange={(e) => setNomeTecnico(e.target.value)}
+                      onFocus={() => setShowTecnicoSuggestions(true)}
+                      onBlur={() => {
+                        setTimeout(() => setShowTecnicoSuggestions(false), 250);
+                      }}
+                      onChange={(e) => {
+                        setNomeTecnico(e.target.value);
+                      }}
                       className={`w-full pl-9 pr-3 py-2.5 rounded-xl border text-sm transition-all duration-200 focus:outline-none focus:ring-2 ${
                         errors.nomeTecnico 
                           ? 'border-red-400 focus:ring-red-100 focus:border-red-500' 
                           : 'border-slate-200 focus:ring-red-500/10 focus:border-claro-red'
                       }`}
                     />
+                    {loadingTecnicos && (
+                      <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-slate-400">
+                        <RefreshCw size={14} className="animate-spin" />
+                      </div>
+                    )}
                   </div>
                   {errors.nomeTecnico && (
                     <p className="text-xs text-red-500 flex items-center gap-1 font-semibold">
                       <AlertTriangle size={12} /> {errors.nomeTecnico}
                     </p>
+                  )}
+
+                  {/* Autocomplete Suggestions for Technicians */}
+                  {showTecnicoSuggestions && tecnicos.length > 0 && (
+                    <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg z-30 max-h-48 overflow-y-auto divide-y divide-slate-100">
+                      {tecnicos
+                        .filter(t => !nomeTecnico.trim() || (t.nomeTecnico || '').toLowerCase().includes(nomeTecnico.toLowerCase()))
+                        .map((t, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            onMouseDown={() => {
+                              setNomeTecnico(t.nomeTecnico);
+                              setMatricula(t.matricula);
+                              setEmpresa(t.empresa);
+                              setCidadeBase(t.cidadeBase);
+                            }}
+                            className="w-full text-left px-4 py-2.5 hover:bg-slate-50 transition-colors text-xs space-y-0.5 cursor-pointer block"
+                          >
+                            <span className="font-bold text-slate-800 block">{t.nomeTecnico}</span>
+                            <span className="text-[10px] text-slate-500 block">
+                              Matrícula: {t.matricula} | {t.empresa} - {t.cidadeBase}
+                            </span>
+                          </button>
+                        ))}
+                    </div>
                   )}
                 </div>
 
@@ -1044,7 +1114,7 @@ export default function FormView({ onSave, onCancel, initialData, profile }: For
                 <div className="h-px bg-slate-100 my-1"></div>
 
                 {/* CQ Avaliador */}
-                <div className="space-y-1.5" id="field-nomeCQ">
+                <div className="space-y-1.5 relative" id="field-nomeCQ">
                   <label className="block text-xs font-black text-slate-700 uppercase tracking-wider">
                     Nome do CQ Avaliador <span className="text-claro-red">*</span>
                   </label>
@@ -1056,6 +1126,10 @@ export default function FormView({ onSave, onCancel, initialData, profile }: For
                       type="text"
                       placeholder="Seu nome completo"
                       value={nomeCQ}
+                      onFocus={() => setShowCqSuggestions(true)}
+                      onBlur={() => {
+                        setTimeout(() => setShowCqSuggestions(false), 250);
+                      }}
                       onChange={(e) => setNomeCQ(e.target.value)}
                       className={`w-full pl-9 pr-3 py-2.5 rounded-xl border text-sm transition-all duration-200 focus:outline-none focus:ring-2 ${
                         errors.nomeCQ 
@@ -1063,11 +1137,61 @@ export default function FormView({ onSave, onCancel, initialData, profile }: For
                           : 'border-slate-200 focus:ring-red-500/10 focus:border-claro-red'
                       }`}
                     />
+                    {loadingCqs && (
+                      <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-slate-400">
+                        <RefreshCw size={14} className="animate-spin" />
+                      </div>
+                    )}
                   </div>
                   {errors.nomeCQ && (
                     <p className="text-xs text-red-500 flex items-center gap-1 font-semibold">
                       <AlertTriangle size={12} /> {errors.nomeCQ}
                     </p>
+                  )}
+
+                  {/* Autocomplete Suggestions for CQ */}
+                  {showCqSuggestions && cqs.length > 0 && (
+                    <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg z-30 max-h-48 overflow-y-auto divide-y divide-slate-100">
+                      {cqs
+                        .filter(cq => {
+                          if (cq.status !== 'Ativo') return false;
+                          
+                          if (tipoCertificacao) {
+                            const savedRules = localStorage.getItem('claro_cq_certificacao_perfis');
+                            let rule: PerfilPermitido = 'CQ ou Analista';
+                            if (savedRules) {
+                              try {
+                                const rules = JSON.parse(savedRules);
+                                rule = rules[tipoCertificacao] || rule;
+                              } catch (e) {}
+                            } else {
+                              if (tipoCertificacao === 'GPON Veterano') rule = 'Apenas CQ';
+                              else if (tipoCertificacao === 'GPON Capacitação') rule = 'Apenas Analista';
+                            }
+                            
+                            const cqProfile = cq.perfil || 'CQ';
+                            if (rule === 'Apenas CQ') return cqProfile === 'CQ';
+                            if (rule === 'Apenas Analista') return cqProfile === 'Analista';
+                          }
+                          
+                          return !nomeCQ.trim() || (cq.nome || '').toLowerCase().includes(nomeCQ.toLowerCase());
+                        })
+                        .map((cq, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            onMouseDown={() => {
+                              setNomeCQ(cq.nome);
+                            }}
+                            className="w-full text-left px-4 py-2.5 hover:bg-slate-50 transition-colors text-xs space-y-0.5 cursor-pointer block"
+                          >
+                            <span className="font-bold text-slate-800 block">{cq.nome}</span>
+                            <span className="text-[10px] text-slate-500 block">
+                              Perfil: {cq.perfil || 'CQ'} | Base: {cq.cidadeBase}
+                            </span>
+                          </button>
+                        ))}
+                    </div>
                   )}
                 </div>
 

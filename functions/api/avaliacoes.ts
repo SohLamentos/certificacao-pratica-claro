@@ -3,16 +3,49 @@ import { initDb, Env } from './_db';
 export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   try {
     await initDb(env.DB);
-    const { results: avs } = await env.DB.prepare(`
+    const url = new URL(request.url);
+    const dataParam = url.searchParams.get("data");
+    const limitParam = url.searchParams.get("limit");
+
+    let query = `
       SELECT a.*, c.nome as certificacao_nome
       FROM avaliacoes a
       LEFT JOIN certificacoes c ON a.certificacao_id = c.id
-      ORDER BY a.created_at DESC
-    `).all();
+    `;
+    const bindParams: any[] = [];
+    const conditions: string[] = [];
 
-    const { results: resps } = await env.DB.prepare(
-      "SELECT * FROM respostas"
-    ).all();
+    if (dataParam) {
+      conditions.push("a.data = ?");
+      bindParams.push(dataParam);
+    }
+
+    if (conditions.length > 0) {
+      query += " WHERE " + conditions.join(" AND ");
+    }
+
+    query += " ORDER BY a.created_at DESC";
+
+    if (limitParam) {
+      const limitVal = parseInt(limitParam, 10);
+      if (!isNaN(limitVal)) {
+        query += " LIMIT ?";
+        bindParams.push(limitVal);
+      }
+    }
+
+    const { results: avs } = await env.DB.prepare(query).bind(...bindParams).all();
+
+    const avIds = avs.map((row: any) => row.id);
+    let resps: any[] = [];
+
+    if (avIds.length > 0) {
+      const placeholders = avIds.map(() => "?").join(",");
+      const { results } = await env.DB.prepare(
+        `SELECT * FROM respostas WHERE avaliacao_id IN (${placeholders})`
+      ).bind(...avIds).all();
+      resps = results || [];
+    }
 
     const answersMap = new Map<string, Record<number, string>>();
     resps.forEach((r: any) => {
