@@ -36,6 +36,7 @@ import {
   calcularResultadoDinamico,
   setCachedChecklistItems
 } from '../data/dynamicChecklist';
+import { apiFetch } from '../lib/api';
 
 interface FormViewProps {
   onSave: (
@@ -110,7 +111,7 @@ export default function FormView({ onSave, onCancel, initialData, profile }: For
     if (!certName) return;
     setLoadingItems(true);
     try {
-      const res = await fetch(`/api/itens?certificacao=${encodeURIComponent(certName)}`);
+      const res = await apiFetch(`/api/itens?certificacao=${encodeURIComponent(certName)}`);
       if (res.ok) {
         const items = await res.json();
         const currentItems = getDynamicChecklistItems();
@@ -187,30 +188,19 @@ export default function FormView({ onSave, onCancel, initialData, profile }: For
       setLoadingTecnicos(true);
       
       try {
-        const resCqs = await fetch('/api/cqs');
+        const resCqs = await apiFetch('/api/cqs');
         if (resCqs.ok) {
           const data = await resCqs.json();
           setCqs(data);
-          localStorage.setItem('claro_cq_cadastrados', JSON.stringify(data));
-        } else {
-          // Fallback to local storage if API fails
-          const saved = localStorage.getItem('claro_cq_cadastrados');
-          if (saved) {
-            setCqs(JSON.parse(saved));
-          }
         }
       } catch (err) {
         console.error('Error fetching CQs in FormView:', err);
-        const saved = localStorage.getItem('claro_cq_cadastrados');
-        if (saved) {
-          try { setCqs(JSON.parse(saved)); } catch (e) {}
-        }
       } finally {
         setLoadingCqs(false);
       }
 
       try {
-        const resTec = await fetch('/api/tecnicos');
+        const resTec = await apiFetch('/api/tecnicos');
         if (resTec.ok) {
           const data = await resTec.json();
           setTecnicos(data);

@@ -1,5 +1,6 @@
 export interface Env {
   DB: D1Database;
+  RealtimeHub: any;
 }
 
 async function checkAndMigrateSchema(db: D1Database) {
@@ -597,3 +598,16 @@ export async function initDb(db: D1Database) {
 
   dbInitialized = true;
 }
+
+export function jsonResponse(data: any, status: number = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+      "Pragma": "no-cache",
+      "Expires": "0"
+    }
+  });
+}
+

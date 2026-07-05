@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, FileCheck, LogOut, ChevronRight, AlertCircle, MapPin } from 'lucide-react';
+import { ShieldCheck, FileCheck, LogOut, ChevronRight, AlertCircle, MapPin, RefreshCw } from 'lucide-react';
 import { motion } from 'motion/react';
 import { CQ } from '../types';
+import { apiFetch } from '../lib/api';
 
 interface CQIdentificationGateProps {
   onSelectCQ: (cq: CQ) => void;
@@ -12,59 +13,34 @@ export default function CQIdentificationGate({ onSelectCQ, onBack }: CQIdentific
   const [cqs, setCqs] = useState<CQ[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [apiError, setApiError] = useState('');
 
-  // Load registered CQs from localStorage
+  // Load registered CQs from API
   useEffect(() => {
-    const saved = localStorage.getItem('claro_cq_cadastrados');
-    if (saved) {
+    const fetchCQs = async () => {
       try {
-        const parsed = JSON.parse(saved);
-        const migrated = parsed.map((item: any) => ({
-          ...item,
-          perfil: item.perfil || 'CQ'
-        }));
-        setCqs(migrated);
+        setLoading(true);
+        const res = await apiFetch('/api/cqs');
+        if (res.ok) {
+          const data = await res.json();
+          setCqs(data);
+          setApiError('');
+        } else {
+          setApiError('Não foi possível carregar a lista de avaliadores do servidor.');
+        }
       } catch (e) {
         console.error('Error loading CQs', e);
+        setApiError('Erro de rede ao conectar com o servidor.');
+      } finally {
+        setLoading(false);
       }
-    } else {
-      // Seed some default active CQs to make the experience smooth initially
-      const defaultCQs: CQ[] = [
-        {
-          id: 'cq-1',
-          nome: 'Pedro Henrique Santos',
-          perfil: 'CQ',
-          cidadeBase: 'São Paulo - Base Leste',
-          status: 'Ativo',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-        {
-          id: 'cq-2',
-          nome: 'Juliana Mendes Silva',
-          perfil: 'CQ',
-          cidadeBase: 'Campinas - Base Norte',
-          status: 'Ativo',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-        {
-          id: 'cq-3',
-          nome: 'Rodrigo Antunes Costa',
-          perfil: 'CQ',
-          cidadeBase: 'Rio de Janeiro - Base Sul',
-          status: 'Inativo',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        }
-      ];
-      setCqs(defaultCQs);
-      localStorage.setItem('claro_cq_cadastrados', JSON.stringify(defaultCQs));
-    }
+    };
+    fetchCQs();
   }, []);
 
-  // Filter only active CQs for selection
-  const activeCqs = cqs.filter(cq => cq.status === 'Ativo');
+  // Filter only active CQs with CQ profile for selection
+  const activeCqs = cqs.filter(cq => cq.perfil === 'CQ' && cq.status === 'Ativo');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -105,7 +81,34 @@ export default function CQIdentificationGate({ onSelectCQ, onBack }: CQIdentific
               </p>
             </div>
 
-            {activeCqs.length === 0 ? (
+            {loading ? (
+              <div className="flex flex-col items-center justify-center py-8 space-y-3">
+                <RefreshCw className="animate-spin text-claro-red" size={28} />
+                <p className="text-xs font-semibold text-slate-500">Carregando avaliadores do servidor...</p>
+              </div>
+            ) : apiError ? (
+              <div className="space-y-6">
+                <div className="p-4 bg-red-50 border border-red-100 rounded-2xl flex items-start space-x-3 text-left">
+                  <AlertCircle className="text-claro-red shrink-0 mt-0.5" size={20} />
+                  <div className="space-y-1">
+                    <h4 className="text-sm font-black text-red-900 uppercase tracking-wide">
+                      Erro de Conexão
+                    </h4>
+                    <p className="text-xs font-semibold text-red-700 leading-relaxed">
+                      {apiError}
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={onBack}
+                  className="w-full py-3 border border-slate-200 hover:bg-slate-50 active:bg-slate-100 text-slate-700 font-bold rounded-xl text-xs transition-colors flex items-center justify-center space-x-2 cursor-pointer"
+                >
+                  <LogOut size={14} />
+                  <span>Voltar ao Perfil</span>
+                </button>
+              </div>
+            ) : activeCqs.length === 0 ? (
               /* No CQs available warning */
               <div className="space-y-6">
                 <div className="p-4 bg-red-50 border border-red-100 rounded-2xl flex items-start space-x-3 text-left">

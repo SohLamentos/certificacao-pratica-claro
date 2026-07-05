@@ -1,4 +1,4 @@
-import { initDb, Env } from './_db';
+import { initDb, Env, jsonResponse } from './_db';
 
 export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   try {
@@ -86,13 +86,13 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
       };
     });
 
-    return Response.json(mapped);
+    return jsonResponse(mapped);
   } catch (error) {
-    return Response.json({
+    return jsonResponse({
       success: false,
       error: String(error),
       route: request.url
-    }, { status: 500 });
+    }, 500);
   }
 };
 
@@ -177,12 +177,13 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       }
     }
 
-    return Response.json({ success: true, id: String(evalId) });
+    return jsonResponse({ success: true, id: String(evalId) });
   } catch (error) {
-    return Response.json({
+    return jsonResponse({
       success: false,
       error: String(error),
       route: request.url
-    }, { status: 500 });
+    }, 500);
   }
 };
+

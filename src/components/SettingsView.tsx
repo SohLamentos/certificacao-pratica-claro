@@ -490,7 +490,6 @@ export default function SettingsView({ onBack, onSwitchProfile }: SettingsViewPr
 
   const handleFullBackup = () => {
     const evaluations = localStorage.getItem('claro_cq_certificacoes') || '[]';
-    const evaluators = localStorage.getItem('claro_cq_cadastrados') || '[]';
 
     const payload = {
       tipo: 'CLARO_CQ_FULL_BACKUP',
@@ -498,7 +497,7 @@ export default function SettingsView({ onBack, onSwitchProfile }: SettingsViewPr
       checklistItems,
       profileRules,
       evaluations: JSON.parse(evaluations),
-      evaluators: JSON.parse(evaluators),
+      evaluators: [],
       backedUpAt: new Date().toISOString()
     };
 
@@ -531,7 +530,6 @@ export default function SettingsView({ onBack, onSwitchProfile }: SettingsViewPr
             if (data.checklistItems) saveDynamicChecklistItems(data.checklistItems);
             if (data.profileRules) localStorage.setItem('claro_cq_certificacao_perfis', JSON.stringify(data.profileRules));
             if (data.evaluations) localStorage.setItem('claro_cq_certificacoes', JSON.stringify(data.evaluations));
-            if (data.evaluators) localStorage.setItem('claro_cq_cadastrados', JSON.stringify(data.evaluators));
             
             alert('Backup restaurado com sucesso! O aplicativo será recarregado.');
             window.location.reload();
@@ -569,7 +567,6 @@ export default function SettingsView({ onBack, onSwitchProfile }: SettingsViewPr
   const handleResetData = () => {
     if (window.confirm('Tem certeza absoluta que deseja redefinir o sistema? Todos os dados (avaliações cadastradas, CQs e checklists personalizados) voltarão aos padrões originais de fábrica.')) {
       localStorage.removeItem('claro_cq_certificacoes');
-      localStorage.removeItem('claro_cq_cadastrados');
       localStorage.removeItem('claro_cq_certificacao_perfis');
       localStorage.removeItem('claro_cq_selecionado');
       localStorage.removeItem('claro_analista_selecionado');

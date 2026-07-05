@@ -1,13 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Plus, Edit2, Trash2, User, MapPin, Check, X, ShieldAlert, Sparkles, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Plus, Edit2, Trash2, User, MapPin, Check, X, ShieldAlert, Sparkles, AlertCircle, RefreshCw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { CQ } from '../types';
+import { apiFetch } from '../lib/api';
 
 interface CQManagerViewProps {
   onBack: () => void;
 }
-
-const LOCAL_STORAGE_CQ_KEY = 'claro_cq_cadastrados';
 
 export default function CQManagerView({ onBack }: CQManagerViewProps) {
   const [cqs, setCqs] = useState<CQ[]>([]);
@@ -22,10 +21,12 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const [evaluations, setEvaluations] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   const fetchCQs = async () => {
     try {
-      const res = await fetch('/api/cqs');
+      const res = await apiFetch('/api/cqs');
       if (res.ok) {
         const data = await res.json();
         setCqs(data);
@@ -37,7 +38,7 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
 
   const fetchEvaluations = async () => {
     try {
-      const res = await fetch('/api/avaliacoes');
+      const res = await apiFetch('/api/avaliacoes');
       if (res.ok) {
         const data = await res.json();
         setEvaluations(data);
@@ -48,8 +49,25 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
   };
 
   useEffect(() => {
-    fetchCQs();
-    fetchEvaluations();
+    const init = async () => {
+      setIsLoading(true);
+      await Promise.all([fetchCQs(), fetchEvaluations()]);
+      setIsLoading(false);
+    };
+    init();
+
+    const handleRealtimeEvent = (e: Event) => {
+      const event = (e as CustomEvent).detail;
+      if (event.type === 'AVALIADOR_DELETADO') {
+        setCqs(prev => prev.filter(cq => String(cq.id) !== String(event.avaliadorId)));
+      } else if (event.type === 'AVALIADOR_ATUALIZADO') {
+        setCqs(prev => prev.map(cq => 
+          String(cq.id) === String(event.avaliadorId) ? { ...cq, status: event.status } : cq
+        ));
+      }
+    };
+    window.addEventListener('realtime-cq-event', handleRealtimeEvent);
+    return () => window.removeEventListener('realtime-cq-event', handleRealtimeEvent);
   }, []);
 
   const resetForm = () => {
@@ -91,6 +109,7 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
     if (!validateForm()) return;
 
     const now = new Date().toISOString();
+    setIsSaving(true);
 
     try {
       if (editingId) {
@@ -103,7 +122,7 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
           updatedAt: now
         };
 
-        const res = await fetch(`/api/cqs/${editingId}`, {
+        const res = await apiFetch(`/api/cqs/${editingId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(updatedCQ)
@@ -111,6 +130,7 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
 
         if (res.ok) {
           await fetchCQs();
+          resetForm();
         } else {
           alert('Erro ao atualizar avaliador.');
         }
@@ -126,7 +146,7 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
           updatedAt: now,
         };
 
-        const res = await fetch('/api/cqs', {
+        const res = await apiFetch('/api/cqs', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(newCQ)
@@ -134,6 +154,7 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
 
         if (res.ok) {
           await fetchCQs();
+          resetForm();
         } else {
           alert('Erro ao criar novo avaliador.');
         }
@@ -141,9 +162,9 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
     } catch (err) {
       console.error('Error saving CQ:', err);
       alert('Erro de rede ao salvar avaliador.');
+    } finally {
+      setIsSaving(false);
     }
-
-    resetForm();
   };
 
   const handleDelete = async (id: string) => {
@@ -161,11 +182,13 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
     }
 
     if (window.confirm("Deseja realmente excluir este avaliador?")) {
+      setIsSaving(true);
       try {
-        const res = await fetch(`/api/cqs/${id}`, {
+        const res = await apiFetch(`/api/cqs/${id}`, {
           method: 'DELETE'
         });
         if (res.ok) {
+          setCqs(prev => prev.filter(cq => cq.id !== id));
           await fetchCQs();
         } else {
           alert('Erro ao excluir avaliador.');
@@ -173,6 +196,8 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
       } catch (err) {
         console.error('Error deleting CQ:', err);
         alert('Erro ao conectar ao servidor para excluir.');
+      } finally {
+        setIsSaving(false);
       }
     }
   };
@@ -194,17 +219,23 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
       updatedAt: new Date().toISOString(),
     };
     
+    setIsSaving(true);
     try {
-      const res = await fetch('/api/cqs', {
+      const res = await apiFetch('/api/cqs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newCQ)
       });
       if (res.ok) {
         await fetchCQs();
+      } else {
+        alert('Erro ao simular avaliador.');
       }
     } catch (e) {
       console.error('Error simulating CQ:', e);
+      alert('Erro ao simular avaliador.');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -214,7 +245,8 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
       <div className="flex items-center justify-between">
         <button
           onClick={onBack}
-          className="flex items-center space-x-1 text-slate-500 hover:text-claro-dark transition-colors font-bold text-xs py-1 px-2 -ml-2 rounded-lg hover:bg-slate-100 cursor-pointer"
+          disabled={isSaving}
+          className="flex items-center space-x-1 text-slate-500 hover:text-claro-dark transition-colors font-bold text-xs py-1 px-2 -ml-2 rounded-lg hover:bg-slate-100 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           id="btn-cq-manager-back"
         >
           <ArrowLeft size={16} />
@@ -225,9 +257,10 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
           <button
             onClick={handleSimulateCQs}
             type="button"
-            className="flex items-center space-x-1 text-[10px] bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold px-2 py-1 rounded-md transition-colors cursor-pointer shadow-sm"
+            disabled={isSaving || isLoading}
+            className="flex items-center space-x-1 text-[10px] bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold px-2 py-1 rounded-md transition-colors cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <Sparkles size={11} className="text-amber-500" />
+            {isSaving ? <RefreshCw size={11} className="animate-spin text-amber-500" /> : <Sparkles size={11} className="text-amber-500" />}
             <span>Simular Avaliador</span>
           </button>
         )}
@@ -260,7 +293,8 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
               </h3>
               <button
                 onClick={resetForm}
-                className="text-slate-400 hover:text-slate-600 transition-colors p-1 hover:bg-slate-50 rounded-lg cursor-pointer"
+                disabled={isSaving}
+                className="text-slate-400 hover:text-slate-600 transition-colors p-1 hover:bg-slate-50 rounded-lg cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <X size={16} />
               </button>
@@ -278,10 +312,11 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
                   </div>
                   <input
                     type="text"
+                    disabled={isSaving}
                     placeholder="Nome do avaliador"
                     value={nome}
                     onChange={(e) => setNome(e.target.value)}
-                    className={`w-full pl-9 pr-3 py-1.5 rounded-lg border text-xs transition-all focus:outline-none focus:ring-2 ${
+                    className={`w-full pl-9 pr-3 py-1.5 rounded-lg border text-xs transition-all focus:outline-none focus:ring-2 disabled:opacity-60 disabled:bg-slate-50 ${
                       errors.nome 
                         ? 'border-red-400 focus:ring-red-100 focus:border-red-500' 
                         : 'border-slate-200 focus:ring-red-500/10 focus:border-claro-red'
@@ -299,8 +334,9 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
                 <div className="flex space-x-2">
                   <button
                     type="button"
+                    disabled={isSaving}
                     onClick={() => setPerfil('CQ')}
-                    className={`flex-1 py-1.5 rounded-lg border text-xs font-bold transition-all flex items-center justify-center space-x-1 cursor-pointer ${
+                    className={`flex-1 py-1.5 rounded-lg border text-xs font-bold transition-all flex items-center justify-center space-x-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
                       perfil === 'CQ'
                         ? 'bg-red-600 border-red-600 text-white shadow-sm font-extrabold'
                         : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
@@ -310,8 +346,9 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
                   </button>
                   <button
                     type="button"
+                    disabled={isSaving}
                     onClick={() => setPerfil('Analista')}
-                    className={`flex-1 py-1.5 rounded-lg border text-xs font-bold transition-all flex items-center justify-center space-x-1 cursor-pointer ${
+                    className={`flex-1 py-1.5 rounded-lg border text-xs font-bold transition-all flex items-center justify-center space-x-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
                       perfil === 'Analista'
                         ? 'bg-blue-600 border-blue-600 text-white shadow-sm font-extrabold'
                         : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
@@ -333,10 +370,11 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
                   </div>
                   <input
                     type="text"
+                    disabled={isSaving}
                     placeholder="Ex: São Paulo - Base Leste"
                     value={cidadeBase}
                     onChange={(e) => setCidadeBase(e.target.value)}
-                    className={`w-full pl-9 pr-3 py-1.5 rounded-lg border text-xs transition-all focus:outline-none focus:ring-2 ${
+                    className={`w-full pl-9 pr-3 py-1.5 rounded-lg border text-xs transition-all focus:outline-none focus:ring-2 disabled:opacity-60 disabled:bg-slate-50 ${
                       errors.cidadeBase 
                         ? 'border-red-400 focus:ring-red-100 focus:border-red-500' 
                         : 'border-slate-200 focus:ring-red-500/10 focus:border-claro-red'
@@ -354,8 +392,9 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
                 <div className="flex space-x-2">
                   <button
                     type="button"
+                    disabled={isSaving}
                     onClick={() => setStatus('Ativo')}
-                    className={`flex-1 py-1.5 rounded-lg border text-xs font-bold transition-all flex items-center justify-center space-x-1 cursor-pointer ${
+                    className={`flex-1 py-1.5 rounded-lg border text-xs font-bold transition-all flex items-center justify-center space-x-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
                       status === 'Ativo'
                         ? 'bg-emerald-500 border-emerald-500 text-white shadow-sm'
                         : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
@@ -366,8 +405,9 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
                   </button>
                   <button
                     type="button"
+                    disabled={isSaving}
                     onClick={() => setStatus('Inativo')}
-                    className={`flex-1 py-1.5 rounded-lg border text-xs font-bold transition-all flex items-center justify-center space-x-1 cursor-pointer ${
+                    className={`flex-1 py-1.5 rounded-lg border text-xs font-bold transition-all flex items-center justify-center space-x-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
                       status === 'Inativo'
                         ? 'bg-slate-600 border-slate-600 text-white shadow-sm'
                         : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
@@ -387,15 +427,18 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
                 <button
                   type="button"
                   onClick={resetForm}
-                  className="flex-1 py-2 border border-slate-300 bg-white hover:bg-slate-50 active:bg-slate-100 text-slate-700 font-bold rounded-lg text-xs transition-all shadow-sm text-center cursor-pointer"
+                  disabled={isSaving}
+                  className="flex-1 py-2 border border-slate-300 bg-white hover:bg-slate-50 active:bg-slate-100 text-slate-700 font-bold rounded-lg text-xs transition-all shadow-sm text-center cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2 bg-claro-red hover:bg-red-700 text-white font-extrabold rounded-lg text-xs transition-all shadow-sm text-center cursor-pointer"
+                  disabled={isSaving}
+                  className="flex-1 py-2 bg-claro-red hover:bg-red-700 text-white font-extrabold rounded-lg text-xs transition-all shadow-sm flex items-center justify-center space-x-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {editingId ? 'Salvar Alterações' : 'Salvar Cadastro'}
+                  {isSaving && <RefreshCw size={12} className="animate-spin" />}
+                  <span>{isSaving ? 'Salvando...' : (editingId ? 'Salvar Alterações' : 'Salvar Cadastro')}</span>
                 </button>
               </div>
             </form>
@@ -413,14 +456,16 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => handleStartCreate('CQ')}
-                className="py-2.5 bg-claro-red hover:bg-red-700 active:bg-red-800 text-white font-bold rounded-lg text-xs transition-all duration-150 shadow-sm flex items-center justify-center space-x-1 cursor-pointer"
+                disabled={isSaving || isLoading}
+                className="py-2.5 bg-claro-red hover:bg-red-700 active:bg-red-800 text-white font-bold rounded-lg text-xs transition-all duration-150 shadow-sm flex items-center justify-center space-x-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Plus size={14} />
                 <span>+ Adicionar CQ</span>
               </button>
               <button
                 onClick={() => handleStartCreate('Analista')}
-                className="py-2.5 bg-claro-red hover:bg-red-700 active:bg-red-800 text-white font-bold rounded-lg text-xs transition-all duration-150 shadow-sm flex items-center justify-center space-x-1 cursor-pointer"
+                disabled={isSaving || isLoading}
+                className="py-2.5 bg-claro-red hover:bg-red-700 active:bg-red-800 text-white font-bold rounded-lg text-xs transition-all duration-150 shadow-sm flex items-center justify-center space-x-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Plus size={14} />
                 <span>+ Adicionar Analista</span>
@@ -438,7 +483,12 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
                 </span>
               </div>
 
-              {cqs.length === 0 ? (
+              {isLoading ? (
+                <div className="flex flex-col items-center justify-center py-12 space-y-3">
+                  <RefreshCw className="animate-spin text-claro-red" size={24} />
+                  <p className="text-xs font-semibold text-slate-500">Carregando avaliadores do banco...</p>
+                </div>
+              ) : cqs.length === 0 ? (
                 <div className="p-8 text-center space-y-2">
                   <div className="mx-auto w-10 h-10 bg-slate-50 text-slate-400 rounded-full flex items-center justify-center border border-slate-100">
                     <User size={18} className="opacity-60" />
@@ -495,14 +545,16 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
                     <div className="flex items-center space-x-0.5">
                       <button
                         onClick={() => handleStartEdit(cq)}
-                        className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                        disabled={isSaving || isLoading}
+                        className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                         title="Editar Avaliador"
                       >
                         <Edit2 size={12} />
                       </button>
                       <button
                         onClick={() => handleDelete(cq.id)}
-                        className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                        disabled={isSaving || isLoading}
+                        className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                         title="Excluir Avaliador"
                       >
                         <Trash2 size={12} />

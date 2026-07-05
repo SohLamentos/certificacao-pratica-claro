@@ -1,4 +1,19 @@
-import { initDb, Env } from '../_db';
+import { initDb, Env, jsonResponse } from '../_db';
+
+async function broadcastEvent(env: Env, event: any) {
+  try {
+    if (env.RealtimeHub) {
+      const id = env.RealtimeHub.idFromName("global");
+      const obj = env.RealtimeHub.get(id);
+      await obj.fetch("http://localhost/broadcast", {
+        method: "POST",
+        body: JSON.stringify(event)
+      });
+    }
+  } catch (err) {
+    console.error("Error broadcasting event:", err);
+  }
+}
 
 export const onRequest: PagesFunction<Env> = async (context) => {
   const { request, env, params } = context;
@@ -7,11 +22,11 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     const id = params.id as string;
 
     if (!id) {
-      return Response.json({
+      return jsonResponse({
         success: false,
         error: "Missing ID",
         route: request.url
-      }, { status: 400 });
+      }, 400);
     }
 
     if (request.method === 'PUT') {
@@ -35,25 +50,38 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         id
       ).run();
 
-      return Response.json({ success: true });
+      if (statusUpper === 'INATIVO') {
+        await broadcastEvent(env, {
+          type: "AVALIADOR_ATUALIZADO",
+          avaliadorId: id,
+          status: "Inativo"
+        });
+      }
+
+      return jsonResponse({ success: true });
     }
 
     if (request.method === 'DELETE') {
       await env.DB.prepare("DELETE FROM avaliadores WHERE id = ?").bind(id).run();
-      return Response.json({ success: true });
+      await broadcastEvent(env, {
+        type: "AVALIADOR_DELETADO",
+        avaliadorId: id
+      });
+      return jsonResponse({ success: true });
     }
 
-    return Response.json({
+    return jsonResponse({
       success: false,
       error: "Method not allowed",
       route: request.url
-    }, { status: 405 });
+    }, 405);
 
   } catch (error) {
-    return Response.json({
+    return jsonResponse({
       success: false,
       error: String(error),
       route: request.url
-    }, { status: 500 });
+    }, 500);
   }
 };
+

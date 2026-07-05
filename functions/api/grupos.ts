@@ -1,4 +1,4 @@
-import { initDb, Env } from './_db';
+import { initDb, Env, jsonResponse } from './_db';
 
 export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   try {
@@ -12,12 +12,13 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
       certificacao: row.certificacao_nome || String(row.certificacao_id)
     }));
 
-    return Response.json(mapped);
+    return jsonResponse(mapped);
   } catch (error) {
-    return Response.json({
+    return jsonResponse({
       success: false,
       error: String(error),
       route: request.url
-    }, { status: 500 });
+    }, 500);
   }
 };
+

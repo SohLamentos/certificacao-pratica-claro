@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { Avaliacao, CertificacaoType, AvaliacaoStatus, CQ } from '../types';
 import { getDynamicChecklistItems, calcularResultadoDinamico, getDynamicCertificacoes, getIconComponent } from '../data/dynamicChecklist';
+import { apiFetch } from '../lib/api';
 
 interface CQAvaliacoesDoDiaProps {
   evaluations: Avaliacao[];
@@ -67,12 +68,18 @@ export default function CQAvaliacoesDoDia({
   };
 
   useEffect(() => {
-    const saved = localStorage.getItem('claro_cq_cadastrados');
-    if (saved) {
+    const fetchCQs = async () => {
       try {
-        setCqs(JSON.parse(saved));
-      } catch (e) {}
-    }
+        const res = await apiFetch('/api/cqs');
+        if (res.ok) {
+          const data = await res.json();
+          setCqs(data);
+        }
+      } catch (e) {
+        console.error('Error fetching CQs in CQAvaliacoesDoDia:', e);
+      }
+    };
+    fetchCQs();
   }, []);
 
   useEffect(() => {

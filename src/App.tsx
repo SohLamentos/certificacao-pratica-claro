@@ -35,6 +35,8 @@ import AnalistaIdentificationGate from './components/AnalistaIdentificationGate'
 import SettingsView from './components/SettingsView';
 import { Avaliacao, CertificacaoType, AvaliacaoStatus, ChecklistValue, CQ } from './types';
 import { getDynamicChecklistItems, calcularResultadoDinamico, setCachedCertificacoes, setCachedChecklistItems } from './data/dynamicChecklist';
+import { apiFetch } from './lib/api';
+import { connectRealtime } from './lib/realtime';
 
 const LOCAL_STORAGE_KEY = 'claro_cq_certificacoes';
 
@@ -175,6 +177,7 @@ export default function App() {
     setIsPerformingCert(false);
   };
   const [evaluations, setEvaluations] = useState<Avaliacao[]>([]);
+  const [cqs, setCqs] = useState<CQ[]>([]);
   const [selectedDashboardDate, setSelectedDashboardDate] = useState<string>(() => {
     const today = new Date();
     const year = today.getFullYear();
@@ -214,7 +217,7 @@ export default function App() {
         url += `?${queryStr}`;
       }
 
-      const res = await fetch(url);
+      const res = await apiFetch(url);
       if (res.ok) {
         const data = await res.json();
         setEvaluations(data);
@@ -224,15 +227,38 @@ export default function App() {
     }
   };
 
+  // Connect to the WebSocket RealtimeHub on app mount
+  useEffect(() => {
+    const disconnect = connectRealtime(() => {
+      // Clear logged in session if our evaluator ID is deleted or inactivated
+      setCurrentProfile(null);
+      setSelectedCQ(null);
+      setSelectedAnalista(null);
+      setCurrentView('home');
+      setEditingEvaluation(null);
+      setIsMobileMenuOpen(false);
+      setIsPerformingCert(false);
+      alert("A sua sessão de avaliador foi encerrada (usuário excluído ou inativado).");
+    });
+    return () => disconnect();
+  }, []);
+
   // Load certifications and evaluations asynchronously (reactive to profile, view and selected dashboard date)
   useEffect(() => {
     const loadAllData = async () => {
       try {
         // Fetch Certificações
-        const resCerts = await fetch('/api/certificacoes');
+        const resCerts = await apiFetch('/api/certificacoes');
         if (resCerts.ok) {
           const certs = await resCerts.json();
           setCachedCertificacoes(certs);
+        }
+
+        // Fetch CQs list
+        const resCqs = await apiFetch('/api/cqs');
+        if (resCqs.ok) {
+          const cqsData = await resCqs.json();
+          setCqs(cqsData);
         }
 
         // Note: DO NOT fetch all items here. They are loaded lazily in FormView when a certification is chosen!
@@ -257,7 +283,7 @@ export default function App() {
           url += `?${queryStr}`;
         }
 
-        const resEvals = await fetch(url);
+        const resEvals = await apiFetch(url);
         if (resEvals.ok) {
           const evals = await resEvals.json();
           setEvaluations(evals);
@@ -348,7 +374,7 @@ export default function App() {
           updatedAt: now
         };
 
-        const res = await fetch(`/api/avaliacoes/${editingEvaluation.id}`, {
+        const res = await apiFetch(`/api/avaliacoes/${editingEvaluation.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(updatedRecord)
@@ -371,7 +397,7 @@ export default function App() {
           updatedAt: now
         };
 
-        const res = await fetch('/api/avaliacoes', {
+        const res = await apiFetch('/api/avaliacoes', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(newRecord)
@@ -412,7 +438,7 @@ export default function App() {
     const target = evaluations.find(e => e.id === deletingId);
     
     try {
-      const res = await fetch(`/api/avaliacoes/${deletingId}`, {
+      const res = await apiFetch(`/api/avaliacoes/${deletingId}`, {
         method: 'DELETE'
       });
 
@@ -435,7 +461,7 @@ export default function App() {
   // Update evaluation handler (e.g., for theoretical grades in CQ dashboard)
   const handleUpdateEvaluation = async (updatedEval: Avaliacao) => {
     try {
-      const res = await fetch(`/api/avaliacoes/${updatedEval.id}`, {
+      const res = await apiFetch(`/api/avaliacoes/${updatedEval.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updatedEval)
@@ -877,15 +903,9 @@ export default function App() {
                   onOpen={handleOpenTrigger}
                   onEdit={(evalObj) => {
                     // Set flag based on whether evaluation is linked to an active Analista
-                    const savedCQs = localStorage.getItem('claro_cq_cadastrados');
                     let isAnalistaEvaluator = false;
-                    if (savedCQs) {
-                      try {
-                        const parsed = JSON.parse(savedCQs);
-                        const evaluator = parsed.find((c: any) => c.nome === evalObj.nomeCQ);
-                        isAnalistaEvaluator = evaluator ? evaluator.perfil === 'Analista' : false;
-                      } catch (e) {}
-                    }
+                    const evaluator = cqs.find((c: any) => c.nome === evalObj.nomeCQ);
+                    isAnalistaEvaluator = evaluator ? evaluator.perfil === 'Analista' : false;
                     setIsPerformingCert(isAnalistaEvaluator);
                     handleEditTrigger(evalObj);
                   }}

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { UserCheck, FileCheck, LogOut, ChevronRight, AlertCircle, MapPin } from 'lucide-react';
+import { UserCheck, FileCheck, LogOut, ChevronRight, AlertCircle, MapPin, RefreshCw } from 'lucide-react';
 import { motion } from 'motion/react';
 import { CQ } from '../types';
+import { apiFetch } from '../lib/api';
 
 interface AnalistaIdentificationGateProps {
   onSelectAnalista: (analista: CQ) => void;
@@ -12,64 +13,30 @@ export default function AnalistaIdentificationGate({ onSelectAnalista, onBack }:
   const [analistas, setAnalistas] = useState<CQ[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [apiError, setApiError] = useState('');
 
-  // Load registered CQs/Analistas from localStorage
+  // Load registered CQs/Analistas from API
   useEffect(() => {
-    const saved = localStorage.getItem('claro_cq_cadastrados');
-    if (saved) {
+    const fetchAnalistas = async () => {
       try {
-        const parsed = JSON.parse(saved);
-        const migrated = parsed.map((item: any) => ({
-          ...item,
-          perfil: item.perfil || 'CQ'
-        }));
-        setAnalistas(migrated);
+        setLoading(true);
+        const res = await apiFetch('/api/cqs');
+        if (res.ok) {
+          const data = await res.json();
+          setAnalistas(data);
+          setApiError('');
+        } else {
+          setApiError('Não foi possível carregar a lista de analistas do servidor.');
+        }
       } catch (e) {
         console.error('Error loading Analistas', e);
+        setApiError('Erro de rede ao conectar com o servidor.');
+      } finally {
+        setLoading(false);
       }
-    } else {
-      // Default list if empty (including Thiago Anderson)
-      const defaultCQs: CQ[] = [
-        {
-          id: 'cq-1',
-          nome: 'Pedro Henrique Santos',
-          perfil: 'CQ',
-          cidadeBase: 'São Paulo - Base Leste',
-          status: 'Ativo',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-        {
-          id: 'cq-2',
-          nome: 'Juliana Mendes Silva',
-          perfil: 'CQ',
-          cidadeBase: 'Campinas - Base Norte',
-          status: 'Ativo',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-        {
-          id: 'cq-3',
-          nome: 'Rodrigo Antunes Costa',
-          perfil: 'CQ',
-          cidadeBase: 'Rio de Janeiro - Base Sul',
-          status: 'Inativo',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-        {
-          id: 'cq-4',
-          nome: 'Thiago Anderson',
-          perfil: 'Analista',
-          cidadeBase: 'São Paulo - Base Centro',
-          status: 'Ativo',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        }
-      ];
-      setAnalistas(defaultCQs);
-      localStorage.setItem('claro_cq_cadastrados', JSON.stringify(defaultCQs));
-    }
+    };
+    fetchAnalistas();
   }, []);
 
   // Filter only active Analistas for selection
@@ -114,7 +81,34 @@ export default function AnalistaIdentificationGate({ onSelectAnalista, onBack }:
               </p>
             </div>
 
-            {activeAnalistas.length === 0 ? (
+            {loading ? (
+              <div className="flex flex-col items-center justify-center py-8 space-y-3">
+                <RefreshCw className="animate-spin text-blue-600" size={28} />
+                <p className="text-xs font-semibold text-slate-500">Carregando analistas do servidor...</p>
+              </div>
+            ) : apiError ? (
+              <div className="space-y-6">
+                <div className="p-4 bg-red-50 border border-red-100 rounded-2xl flex items-start space-x-3 text-left">
+                  <AlertCircle className="text-claro-red shrink-0 mt-0.5" size={20} />
+                  <div className="space-y-1">
+                    <h4 className="text-sm font-black text-red-900 uppercase tracking-wide">
+                      Erro de Conexão
+                    </h4>
+                    <p className="text-xs font-semibold text-red-700 leading-relaxed">
+                      {apiError}
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={onBack}
+                  className="w-full py-3 border border-slate-200 hover:bg-slate-50 active:bg-slate-100 text-slate-700 font-bold rounded-xl text-xs transition-colors flex items-center justify-center space-x-2 cursor-pointer"
+                >
+                  <LogOut size={14} />
+                  <span>Voltar</span>
+                </button>
+              </div>
+            ) : activeAnalistas.length === 0 ? (
               /* No Analistas available warning */
               <div className="space-y-6">
                 <div className="p-4 bg-red-50 border border-red-100 rounded-2xl flex items-start space-x-3 text-left">
