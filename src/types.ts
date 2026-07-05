@@ -52,6 +52,7 @@ export interface Avaliacao {
   empresa: string;
   cidadeBase: string;
   nomeCQ: string;
+  avaliadorId?: string;
   data: string;
   tipoCertificacao: CertificacaoType;
   status: AvaliacaoStatus;

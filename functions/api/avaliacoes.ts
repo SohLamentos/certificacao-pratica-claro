@@ -20,6 +20,12 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
       bindParams.push(dataParam);
     }
 
+    const cqIdParam = url.searchParams.get("cqId") || url.searchParams.get("avaliadorId");
+    if (cqIdParam) {
+      conditions.push("a.avaliador_id = ?");
+      bindParams.push(cqIdParam);
+    }
+
     if (conditions.length > 0) {
       query += " WHERE " + conditions.join(" AND ");
     }
@@ -73,6 +79,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
         empresa: row.empresa,
         cidadeBase: row.cidade_base,
         nomeCQ: row.nome_cq,
+        avaliadorId: row.avaliador_id ? String(row.avaliador_id) : undefined,
         data: row.data,
         tipoCertificacao: row.certificacao_nome || String(row.certificacao_id),
         status: row.status,

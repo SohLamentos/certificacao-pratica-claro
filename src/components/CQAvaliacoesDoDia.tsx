@@ -53,19 +53,38 @@ export default function CQAvaliacoesDoDia({
   const setSelectedDate = onDateChange || setLocalDate;
   
   const [cqs, setCqs] = useState<CQ[]>([]);
+  const [localEvaluations, setLocalEvaluations] = useState<Avaliacao[]>(evaluations);
+
+  // Sync state when evaluations prop changes
+  useEffect(() => {
+    setLocalEvaluations(evaluations);
+  }, [evaluations]);
 
   // Local draft states for theoretical grade inputs
   const [draftNotes, setDraftNotes] = useState<Record<string, string>>({});
   const [noteErrors, setNoteErrors] = useState<Record<string, string>>({});
   const [isQuerying, setIsQuerying] = useState(false);
 
-  const handleRefreshQuery = () => {
+  // 3. Garantir que ela chame novamente a API de certificações/agendas do dia usando apiFetch com cache no-store
+  const carregarAvaliacoesDoDia = React.useCallback(async () => {
     setIsQuerying(true);
-    const timer = setTimeout(() => {
+    try {
+      const res = await apiFetch(`/api/avaliacoes?data=${selectedDate}`, {
+        headers: {
+          'Cache-Control': 'no-cache, no-store'
+        }
+      });
+      if (res.ok) {
+        const data = await res.json() as Avaliacao[];
+        console.log('[Atualizar CQ] resposta API', data);
+        setLocalEvaluations(data);
+      }
+    } catch (e) {
+      console.error('Error in carregarAvaliacoesDoDia:', e);
+    } finally {
       setIsQuerying(false);
-    }, 450);
-    return () => clearTimeout(timer);
-  };
+    }
+  }, [selectedDate]);
 
   useEffect(() => {
     const fetchCQs = async () => {
@@ -82,15 +101,12 @@ export default function CQAvaliacoesDoDia({
     fetchCQs();
   }, []);
 
+  // Real data loading on selectedDate or selectedCQ changes
   useEffect(() => {
     if (selectedDate) {
-      setIsQuerying(true);
-      const timer = setTimeout(() => {
-        setIsQuerying(false);
-      }, 450);
-      return () => clearTimeout(timer);
+      carregarAvaliacoesDoDia();
     }
-  }, [selectedDate, selectedCQ]);
+  }, [selectedDate, selectedCQ?.id, carregarAvaliacoesDoDia]);
 
   const handleNoteChange = (id: string, value: string) => {
     setDraftNotes(prev => ({ ...prev, [id]: value }));
@@ -147,6 +163,8 @@ export default function CQAvaliacoesDoDia({
 
     // Call parent callback to persist
     onUpdateEvaluation(updatedEval);
+    // Optimistic update of local state so user sees note saved instantly
+    setLocalEvaluations(prev => prev.map(e => e.id === updatedEval.id ? updatedEval : e));
   };
 
   useEffect(() => {
@@ -165,17 +183,27 @@ export default function CQAvaliacoesDoDia({
   }, [propSelectedDate, localDate, onDateChange]);
 
   // Filter evaluations for the selected date and selected CQ with profile validation
-  const filtered = evaluations.filter(e => {
-    const isDateMatch = e.data === selectedDate;
-    const isCQMatch = e.nomeCQ === selectedCQ.nome;
-    if (!isDateMatch || !isCQMatch) return false;
+  const filtered = React.useMemo(() => {
+    const list = localEvaluations.filter(e => {
+      const isDateMatch = e.data === selectedDate;
+      
+      // Match by exact database evaluator ID if available
+      const isCQMatch = e.avaliadorId 
+        ? String(e.avaliadorId) === String(selectedCQ.id)
+        : e.nomeCQ === selectedCQ.nome;
 
-    // Perfil must match
-    const evaluatorCQ = cqs.find(c => c.nome === e.nomeCQ);
-    const evaluatorProfile = evaluatorCQ ? (evaluatorCQ.perfil || 'CQ') : 'CQ';
-    const targetProfile = selectedCQ.perfil || 'CQ';
-    return evaluatorProfile === targetProfile;
-  });
+      if (!isDateMatch || !isCQMatch) return false;
+
+      // Perfil must match
+      const evaluatorCQ = cqs.find(c => String(c.id) === String(e.avaliadorId) || c.nome === e.nomeCQ);
+      const evaluatorProfile = evaluatorCQ ? (evaluatorCQ.perfil || 'CQ') : 'CQ';
+      const targetProfile = selectedCQ.perfil || 'CQ';
+      return evaluatorProfile === targetProfile;
+    });
+
+    console.log('[Atualizar CQ] filtradas', list);
+    return list;
+  }, [localEvaluations, selectedDate, selectedCQ, cqs]);
 
   // Status mapping to Brazilian Portuguese labels and colors
   const getStatusDisplay = (status: AvaliacaoStatus) => {
@@ -288,7 +316,7 @@ export default function CQAvaliacoesDoDia({
           </h3>
 
           <button
-            onClick={handleRefreshQuery}
+            onClick={carregarAvaliacoesDoDia}
             className="flex items-center space-x-1.5 text-[10px] text-slate-600 hover:text-claro-red font-bold py-1 px-2.5 rounded-md bg-white hover:bg-slate-50 transition-colors border border-slate-200 shadow-2xs cursor-pointer"
             title="Atualizar agendamentos do banco"
           >
@@ -512,7 +540,7 @@ export default function CQAvaliacoesDoDia({
                 </p>
               </div>
               <button
-                onClick={handleRefreshQuery}
+                onClick={carregarAvaliacoesDoDia}
                 className="flex items-center space-x-1.5 text-xs text-slate-600 hover:text-claro-red font-bold py-2 px-4 rounded-lg bg-slate-50 hover:bg-slate-100 transition-all cursor-pointer border border-slate-200 shadow-xs mx-auto"
               >
                 <RefreshCw size={13} className={isQuerying ? 'animate-spin' : ''} />
