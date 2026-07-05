@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   CheckCircle2, 
@@ -196,13 +196,21 @@ export default function App() {
   const [toast, setToast] = useState<ToastState | null>(null);
 
   // Fetch updated evaluations from the D1 API based on view context
-  const refreshEvaluations = async () => {
+  const refreshEvaluations = useCallback(async () => {
     try {
       let url = '/api/avaliacoes';
       const params = new URLSearchParams();
       if (currentView === 'home' || currentView === 'realizar') {
         if (currentProfile === 'cq') {
           params.append('data', selectedDashboardDate);
+          if (selectedCQ?.id) {
+            params.append('cqId', String(selectedCQ.id));
+          }
+        } else if (currentProfile === 'analista') {
+          params.append('data', selectedDashboardDate);
+          if (selectedAnalista?.id) {
+            params.append('cqId', String(selectedAnalista.id));
+          }
         } else {
           params.append('limit', '20');
         }
@@ -217,7 +225,9 @@ export default function App() {
         url += `?${queryStr}`;
       }
 
-      const res = await apiFetch(url);
+      const res = await apiFetch(url, {
+        headers: { 'Cache-Control': 'no-cache, no-store' }
+      });
       if (res.ok) {
         const data = await res.json();
         setEvaluations(data);
@@ -225,7 +235,7 @@ export default function App() {
     } catch (e) {
       console.error('Failed to refresh evaluations', e);
     }
-  };
+  }, [currentProfile, selectedDashboardDate, currentView, selectedCQ?.id, selectedAnalista?.id]);
 
   // Connect to the WebSocket RealtimeHub on app mount
   useEffect(() => {
@@ -263,37 +273,14 @@ export default function App() {
 
         // Note: DO NOT fetch all items here. They are loaded lazily in FormView when a certification is chosen!
 
-        // Fetch Evaluations
-        let url = '/api/avaliacoes';
-        const params = new URLSearchParams();
-        if (currentView === 'home' || currentView === 'realizar') {
-          if (currentProfile === 'cq') {
-            params.append('data', selectedDashboardDate);
-          } else {
-            params.append('limit', '20');
-          }
-        } else if (currentView === 'historico') {
-          // No parameters, fetches full history
-        } else {
-          params.append('limit', '20');
-        }
-
-        const queryStr = params.toString();
-        if (queryStr) {
-          url += `?${queryStr}`;
-        }
-
-        const resEvals = await apiFetch(url);
-        if (resEvals.ok) {
-          const evals = await resEvals.json();
-          setEvaluations(evals);
-        }
+        // Fetch Evaluations using the unified refresh callback
+        await refreshEvaluations();
       } catch (err) {
         console.error('Failed to load data from D1 database APIs:', err);
       }
     };
     loadAllData();
-  }, [currentProfile, selectedDashboardDate, currentView]);
+  }, [currentProfile, selectedDashboardDate, currentView, refreshEvaluations]);
 
   // Show a floating toast message helper
   const showToast = (message: string, type: 'success' | 'info' | 'error' = 'success') => {
@@ -777,6 +764,7 @@ export default function App() {
                     handleSelectProfile(null);
                   }}
                   onUpdateEvaluation={handleUpdateEvaluation}
+                  onRefresh={refreshEvaluations}
                 />
               </motion.div>
             )}
@@ -841,6 +829,7 @@ export default function App() {
                       handleSelectProfile(null);
                     }}
                     onUpdateEvaluation={handleUpdateEvaluation}
+                    onRefresh={refreshEvaluations}
                   />
                 </motion.div>
               )

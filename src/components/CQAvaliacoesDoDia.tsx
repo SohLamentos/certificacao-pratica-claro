@@ -23,6 +23,7 @@ import {
 import { Avaliacao, CertificacaoType, AvaliacaoStatus, CQ } from '../types';
 import { getDynamicChecklistItems, calcularResultadoDinamico, getDynamicCertificacoes, getIconComponent } from '../data/dynamicChecklist';
 import { apiFetch } from '../lib/api';
+import { useCallback } from 'react';
 
 interface CQAvaliacoesDoDiaProps {
   evaluations: Avaliacao[];
@@ -34,6 +35,7 @@ interface CQAvaliacoesDoDiaProps {
   onUpdateEvaluation: (evaluation: Avaliacao) => void;
   selectedDate?: string;
   onDateChange?: (date: string) => void;
+  onRefresh: () => Promise<void>;
 }
 
 export default function CQAvaliacoesDoDia({ 
@@ -45,7 +47,8 @@ export default function CQAvaliacoesDoDia({
   onSwitchCQ,
   onUpdateEvaluation,
   selectedDate: propSelectedDate,
-  onDateChange
+  onDateChange,
+  onRefresh
 }: CQAvaliacoesDoDiaProps) {
   // Date state: defaults to today's local date (YYYY-MM-DD)
   const [localDate, setLocalDate] = useState('');
@@ -53,38 +56,23 @@ export default function CQAvaliacoesDoDia({
   const setSelectedDate = onDateChange || setLocalDate;
   
   const [cqs, setCqs] = useState<CQ[]>([]);
-  const [localEvaluations, setLocalEvaluations] = useState<Avaliacao[]>(evaluations);
-
-  // Sync state when evaluations prop changes
-  useEffect(() => {
-    setLocalEvaluations(evaluations);
-  }, [evaluations]);
 
   // Local draft states for theoretical grade inputs
   const [draftNotes, setDraftNotes] = useState<Record<string, string>>({});
   const [noteErrors, setNoteErrors] = useState<Record<string, string>>({});
   const [isQuerying, setIsQuerying] = useState(false);
 
-  // 3. Garantir que ela chame novamente a API de certificações/agendas do dia usando apiFetch com cache no-store
-  const carregarAvaliacoesDoDia = React.useCallback(async () => {
+  // Call onRefresh to update global state in App.tsx
+  const carregarAvaliacoesDoDia = useCallback(async () => {
     setIsQuerying(true);
     try {
-      const res = await apiFetch(`/api/avaliacoes?data=${selectedDate}`, {
-        headers: {
-          'Cache-Control': 'no-cache, no-store'
-        }
-      });
-      if (res.ok) {
-        const data = await res.json() as Avaliacao[];
-        console.log('[Atualizar CQ] resposta API', data);
-        setLocalEvaluations(data);
-      }
+      await onRefresh();
     } catch (e) {
       console.error('Error in carregarAvaliacoesDoDia:', e);
     } finally {
       setIsQuerying(false);
     }
-  }, [selectedDate]);
+  }, [onRefresh]);
 
   useEffect(() => {
     const fetchCQs = async () => {
@@ -163,8 +151,6 @@ export default function CQAvaliacoesDoDia({
 
     // Call parent callback to persist
     onUpdateEvaluation(updatedEval);
-    // Optimistic update of local state so user sees note saved instantly
-    setLocalEvaluations(prev => prev.map(e => e.id === updatedEval.id ? updatedEval : e));
   };
 
   useEffect(() => {
@@ -184,7 +170,7 @@ export default function CQAvaliacoesDoDia({
 
   // Filter evaluations for the selected date and selected CQ with profile validation
   const filtered = React.useMemo(() => {
-    const list = localEvaluations.filter(e => {
+    const list = evaluations.filter(e => {
       const isDateMatch = e.data === selectedDate;
       
       // Match by exact database evaluator ID if available
@@ -203,7 +189,7 @@ export default function CQAvaliacoesDoDia({
 
     console.log('[Atualizar CQ] filtradas', list);
     return list;
-  }, [localEvaluations, selectedDate, selectedCQ, cqs]);
+  }, [evaluations, selectedDate, selectedCQ, cqs]);
 
   // Status mapping to Brazilian Portuguese labels and colors
   const getStatusDisplay = (status: AvaliacaoStatus) => {
