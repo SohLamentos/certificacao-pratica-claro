@@ -1,112 +1,34 @@
-import { initDb, Env, jsonResponse } from '../_db';
+import { Env, jsonResponse } from '../_db';
+import { EvaluationService } from '../_services';
+import { EvaluationRepository } from '../_repositories';
 
 export const onRequest: PagesFunction<Env> = async (context) => {
   const { request, env, params } = context;
   try {
-    await initDb(env.DB);
     const id = params.id as string;
-
     if (!id) {
       return jsonResponse({
         success: false,
-        error: "Missing ID",
-        route: request.url
+        error: "ID ausente",
+        message: "O identificador da avaliação é obrigatório."
       }, 400);
     }
 
     if (request.method === 'PUT') {
       const data = await request.json() as any;
-      const resultadoStr = data.resultado ? JSON.stringify(data.resultado) : null;
-      const notaPrat = data.resultado?.nota !== undefined ? Number(data.resultado.nota) : null;
-
-      // 1. Resolve or insert Tecnico
-      let tecId: number | null = null;
-      const tecRow = await env.DB.prepare("SELECT id FROM tecnicos WHERE matricula = ?").bind(data.matricula).first();
-      if (tecRow) {
-        tecId = (tecRow as any).id;
-      } else {
-        const resultTec = await env.DB.prepare(
-          "INSERT INTO tecnicos (nome, matricula, empresa, cidade_base, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
-        ).bind(
-          data.nomeTecnico,
-          data.matricula,
-          data.empresa,
-          data.cidadeBase
-        ).run();
-        tecId = resultTec.meta?.last_row_id || (resultTec as any).lastRowId || null;
-      }
-
-      // 2. Resolve Avaliador
-      let avaliadorId: number | null = null;
-      const avRow = await env.DB.prepare("SELECT id FROM avaliadores WHERE nome = ?").bind(data.nomeCQ).first();
-      if (avRow) {
-        avaliadorId = (avRow as any).id;
-      }
-
-      // 3. Resolve Certificacao
-      let certId: number | null = null;
-      const certRow = await env.DB.prepare("SELECT id FROM certificacoes WHERE nome = ?").bind(data.tipoCertificacao).first();
-      if (certRow) {
-        certId = (certRow as any).id;
-      }
-
-      // Update evaluation
-      await env.DB.prepare(
-        `UPDATE avaliacoes SET 
-          tecnico_id = ?, nome_tecnico = ?, matricula = ?, empresa = ?, cidade_base = ?, 
-          avaliador_id = ?, nome_cq = ?, data = ?, certificacao_id = ?, status = ?, 
-          resultado = ?, observacao = ?, nota_teorica = ?, nota_pratica = ?, modo_certificacao = ?, 
-          updated_at = CURRENT_TIMESTAMP 
-        WHERE id = ?`
-      ).bind(
-        tecId,
-        data.nomeTecnico,
-        data.matricula,
-        data.empresa,
-        data.cidadeBase,
-        avaliadorId,
-        data.nomeCQ,
-        data.data,
-        certId,
-        data.status,
-        resultadoStr,
-        data.observacao || '',
-        data.notaTeorica !== undefined && data.notaTeorica !== null ? Number(data.notaTeorica) : null,
-        notaPrat,
-        data.modoCertificacao || 'TRADICIONAL',
-        id
-      ).run();
-
-      // Sync responses table
-      await env.DB.prepare("DELETE FROM respostas WHERE avaliacao_id = ?").bind(id).run();
-      if (data.checklistResponses) {
-        for (const [itemIdStr, resVal] of Object.entries(data.checklistResponses)) {
-          const itemId = parseInt(itemIdStr, 10);
-          await env.DB.prepare(
-            "INSERT INTO respostas (avaliacao_id, item_id, resposta) VALUES (?, ?, ?)"
-          ).bind(id, itemId, resVal).run();
-        }
-      }
-
-      // Fetch the updated evaluation to return it
-      const updatedRow = await env.DB.prepare(`
-        SELECT a.*, c.nome as certificacao_nome
-        FROM avaliacoes a
-        LEFT JOIN certificacoes c ON a.certificacao_id = c.id
-        WHERE a.id = ?
-      `).bind(id).first() as any;
+      const updatedRow = await EvaluationService.createOrUpdate(env.DB, { ...data, id });
 
       if (!updatedRow) {
-        return jsonResponse({ success: false, error: "Evaluation not found after update" }, 404);
+        return jsonResponse({
+          success: false,
+          error: "Não encontrado",
+          message: "Avaliação não pôde ser localizada após a atualização."
+        }, 404);
       }
 
-      // Fetch checklist responses
-      const { results: resps } = await env.DB.prepare(
-        "SELECT * FROM respostas WHERE avaliacao_id = ?"
-      ).bind(id).all();
-
+      const resps = await EvaluationRepository.getChecklistResponses(env.DB, id);
       const responsesObj: Record<number, string> = {};
-      (resps || []).forEach((r: any) => {
+      resps.forEach((r: any) => {
         responsesObj[r.item_id] = r.resposta;
       });
 
@@ -116,7 +38,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           resObj = JSON.parse(updatedRow.resultado);
         }
       } catch (e) {
-        console.error("Error parsing resultado for", updatedRow.id, e);
+        console.error("Error parsing resultado", e);
       }
 
       const mapped = {
@@ -144,23 +66,21 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
 
     if (request.method === 'DELETE') {
-      await env.DB.prepare("DELETE FROM avaliacoes WHERE id = ?").bind(id).run();
-      await env.DB.prepare("DELETE FROM respostas WHERE avaliacao_id = ?").bind(id).run();
+      await EvaluationRepository.delete(env.DB, id);
       return jsonResponse({ success: true });
     }
 
     return jsonResponse({
       success: false,
-      error: "Method not allowed",
-      route: request.url
+      error: "Método não permitido",
+      message: `O método ${request.method} não é suportado nesta rota.`
     }, 405);
 
-  } catch (error) {
+  } catch (error: any) {
     return jsonResponse({
       success: false,
-      error: String(error),
-      route: request.url
+      error: "Falha de processamento na avaliação",
+      message: error.message
     }, 500);
   }
 };
-

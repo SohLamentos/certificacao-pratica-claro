@@ -31,7 +31,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     const finalPerfil = perfil_usuario || "SISTEMA";
 
     // Generate login_hash using Web Crypto API
-    const salt = "claro_cq_lgpd_salt_2026";
+    const salt = env.LGPD_HASH_SALT || "claro_cq_lgpd_salt_2026_prod";
     const input = `${finalUserId}:${salt}`;
     const enc = new TextEncoder();
     const hashData = enc.encode(input);
@@ -312,12 +312,14 @@ Responda exclusivamente no formato JSON:
       promptText += `\nConsidere as correções e motivos de divergência listados acima para evitar cometer os mesmos equívocos na análise atual.`;
     }
 
-    // 8. Chamar Cloudflare Workers AI ou fallback
-    let resultado_ia = 'APROVADO';
-    let confianca_ia = 0.92;
-    let justificativa_ia = "Evidência analisada com sucesso via manual.";
-    let ia_modelo = "@cf/meta/llama-3.2-11b-vision-instruct";
-    let ia_custo_estimado = isPaid ? 0.0050 : 0.0000;
+    // 8. Chamar Cloudflare Workers AI ou fallback para REVISÃO HUMANIZADA/MANUAL
+    let status_ia = 'PENDENTE_ANALISE';
+    let resultado_ia = 'FALHA DE PROCESSAMENTO IA';
+    let confianca_ia = 0.0;
+    let justificativa_ia = "O serviço de análise automática por IA falhou ou está indisponível. Esta evidência foi encaminhada para REVISÃO MANUAL obrigatória pelo CQ.";
+    let ia_modelo = "Nenhum (Serviço Offline)";
+    let ia_custo_estimado = 0.0;
+    let fallbackAtivo = false;
 
     const bucket = env.EVIDENCIAS_BUCKET;
     if (env.AI && typeof env.AI.run === 'function' && bucket) {
@@ -327,7 +329,7 @@ Responda exclusivamente no formato JSON:
           const imageBuffer = await object.arrayBuffer();
           const imageArray = Array.from(new Uint8Array(imageBuffer));
 
-          const response = await env.AI.run(ia_modelo, {
+          const response = await env.AI.run("@cf/meta/llama-3.2-11b-vision-instruct", {
             prompt: promptText,
             image: imageArray
           });
@@ -345,59 +347,32 @@ Responda exclusivamente no formato JSON:
 
           if (parsed && typeof parsed === 'object') {
             resultado_ia = parsed.aprovado ? 'APROVADO' : 'REPROVADO';
+            status_ia = parsed.aprovado ? 'APROVADO_IA' : 'REPROVADO_IA';
             confianca_ia = typeof parsed.confianca === 'number' ? parsed.confianca : 0.90;
             justificativa_ia = parsed.justificativa || "Análise concluída via Workers AI.";
+            ia_modelo = "@cf/meta/llama-3.2-11b-vision-instruct";
+            ia_custo_estimado = isPaid ? 0.0050 : 0.0000;
+          } else {
+            throw new Error("Resposta inválida da API do Workers AI");
           }
+        } else {
+          throw new Error("Arquivo de evidência não localizado no bucket R2");
         }
       } catch (err: any) {
-        console.error("Workers AI Call failed, using domain fallback:", err);
+        console.error("Workers AI Call failed:", err);
+        fallbackAtivo = true;
       }
+    } else {
+      fallbackAtivo = true;
     }
 
-    // Telecom domain knowledge simulations if fallback
-    if (justificativa_ia === "Evidência analisada com sucesso via manual.") {
-      ia_modelo = "@cf/meta/llama-3.2-11b-vision-instruct (Simulado-Manual)";
-      const etapa = evidence.etapa;
-
-      if (rules.length > 0) {
-        // Build dynamic mock justification reflecting the rule titles
-        const titles = rules.map((r: any) => `"${r.titulo}"`).join(', ');
-        justificativa_ia = `Auditoria manual realizada com sucesso aplicando regras de conformidade ativa: ${titles}. Os critérios de conformidade e pesos foram atendidos satisfatoriamente.`;
-      } else {
-        if (etapa === "Identificação do técnico") {
-          resultado_ia = 'APROVADO';
-          confianca_ia = 0.96;
-          justificativa_ia = "IA identificou crachá de identificação funcional visível com foto e nome legíveis.";
-        } else if (etapa === "Evidência da instalação física") {
-          resultado_ia = 'APROVADO';
-          confianca_ia = 0.91;
-          justificativa_ia = "Fibra óptica fixada de forma correta, curvatura ideal do cabo e roseta instalada de acordo com as normas técnicas.";
-        } else if (etapa === "Evidência da ONT/equipamento") {
-          resultado_ia = 'APROVADO';
-          confianca_ia = 0.94;
-          justificativa_ia = "Equipamento ONT detectado. LEDs de Power e PON estão acesos em verde estável.";
-        } else if (etapa === "Evidência dos níveis de sinal") {
-          resultado_ia = 'APROVADO';
-          confianca_ia = 0.95;
-          justificativa_ia = "Leitura óptica detectada na faixa aceitável de telecom: -19.4 dBm.";
-        } else if (etapa === "Evidência do Wi-Fi configurado") {
-          resultado_ia = 'APROVADO';
-          confianca_ia = 0.89;
-          justificativa_ia = "Tela de configuração de Wi-Fi identificada com SSID ativo nas frequências de 2.4 GHz e 5 GHz.";
-        } else if (etapa === "Evidência de organização/acabamento") {
-          resultado_ia = 'APROVADO';
-          confianca_ia = 0.92;
-          justificativa_ia = "Instalação organizada. Cabos agrupados e local limpo de resíduos.";
-        } else if (etapa === "Evidência final com cliente/local") {
-          resultado_ia = 'APROVADO';
-          confianca_ia = 0.97;
-          justificativa_ia = "Foto externa do imóvel/residência confirma o endereço cadastrado da instalação.";
-        } else {
-          resultado_ia = 'APROVADO';
-          confianca_ia = 0.90;
-          justificativa_ia = "IA analisou e aprovou a evidência com base nos critérios de conformidade técnica.";
-        }
-      }
+    if (fallbackAtivo) {
+      status_ia = 'PENDENTE_ANALISE';
+      resultado_ia = 'FALHA DE PROCESSAMENTO IA';
+      confianca_ia = 0.0;
+      justificativa_ia = "Aviso: O serviço de análise de IA (Workers AI) está indisponível ou falhou. Esta evidência foi direcionada para REVISÃO MANUAL obrigatória pelo CQ. Por favor, tome a decisão manualmente.";
+      ia_modelo = "Workers AI Offline";
+      ia_custo_estimado = 0.0;
     }
 
     const nowStr = new Date().toISOString();
@@ -417,7 +392,7 @@ Responda exclusivamente no formato JSON:
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).bind(
-      resultado_ia === 'APROVADO' ? 'APROVADO_IA' : 'REPROVADO_IA',
+      status_ia,
       resultado_ia,
       confianca_ia,
       justificativa_ia,
@@ -428,20 +403,21 @@ Responda exclusivamente no formato JSON:
       evidencia_id
     ).run();
 
-    // 9. Log auditoria de análise realizada (with dynamic rules logged inside rules_used)
+    // 9. Log auditoria de análise realizada
     await env.DB.prepare(`
       INSERT INTO ia_auditoria (certificacao_id, evidencia_id, acao, payload, usuario_id, perfil_usuario, login_hash)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).bind(
       evidence.certificacao_id,
       evidencia_id,
-      "IA_ANALISE_COMPLETA",
+      fallbackAtivo ? "IA_FALHA_PROCESSAMENTO" : "IA_ANALISE_COMPLETA",
       JSON.stringify({
         etapa: evidence.etapa,
         modelo: ia_modelo,
         custo: ia_custo_estimado,
         origem: 'MANUAL',
-        regras_usadas: ruleIdsUsed
+        regras_usadas: ruleIdsUsed,
+        erro: fallbackAtivo ? "Serviço Workers AI indisponível ou falhou durante execução" : undefined
       }),
       finalUserId,
       finalPerfil,

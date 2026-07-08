@@ -133,19 +133,6 @@ export default function App() {
     return null;
   });
 
-  const handleSelectCQ = (cq: CQ | null) => {
-    setSelectedCQ(cq);
-    if (cq) {
-      localStorage.setItem('claro_cq_selecionado', JSON.stringify(cq));
-    } else {
-      localStorage.removeItem('claro_cq_selecionado');
-    }
-  };
-
-  const [currentView, setCurrentView] = useState<string>('home');
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [isPerformingCert, setIsPerformingCert] = useState(false);
-
   const [selectedAnalista, setSelectedAnalista] = useState<CQ | null>(() => {
     const saved = localStorage.getItem('claro_analista_selecionado');
     if (saved) {
@@ -158,21 +145,74 @@ export default function App() {
     return null;
   });
 
-  const handleSelectAnalista = (analista: CQ | null) => {
-    setSelectedAnalista(analista);
-    if (analista) {
-      localStorage.setItem('claro_analista_selecionado', JSON.stringify(analista));
+  const [currentView, setCurrentView] = useState<string>('home');
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isPerformingCert, setIsPerformingCert] = useState(false);
+
+  const triggerServerLogin = useCallback(async (userId: string, profile: 'analista' | 'cq') => {
+    try {
+      const response = await apiFetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, profile })
+      });
+      if (response.ok) {
+        const result = await response.json() as any;
+        if (result.success && result.token) {
+          localStorage.setItem('claro_cq_auth_token', result.token);
+        }
+      }
+    } catch (e) {
+      console.error("Falha ao sincronizar sessão segura com o servidor", e);
+    }
+  }, []);
+
+  // Sync session on mount/change of selection
+  useEffect(() => {
+    const syncSession = async () => {
+      if (currentProfile === 'cq' && selectedCQ?.id) {
+        await triggerServerLogin(selectedCQ.id, 'cq');
+      } else if (currentProfile === 'analista' && selectedAnalista?.id) {
+        await triggerServerLogin(selectedAnalista.id, 'analista');
+      }
+    };
+    syncSession();
+  }, [currentProfile, selectedCQ?.id, selectedAnalista?.id, triggerServerLogin]);
+
+  const handleSelectCQ = async (cq: CQ | null) => {
+    setSelectedCQ(cq);
+    if (cq) {
+      localStorage.setItem('claro_cq_selecionado', JSON.stringify(cq));
+      await triggerServerLogin(cq.id, 'cq');
     } else {
-      localStorage.removeItem('claro_analista_selecionado');
+      localStorage.removeItem('claro_cq_selecionado');
+      localStorage.removeItem('claro_cq_auth_token');
     }
   };
 
-  const handleSelectProfile = (profile: 'analista' | 'cq' | null) => {
+  const handleSelectAnalista = async (analista: CQ | null) => {
+    setSelectedAnalista(analista);
+    if (analista) {
+      localStorage.setItem('claro_analista_selecionado', JSON.stringify(analista));
+      await triggerServerLogin(analista.id, 'analista');
+    } else {
+      localStorage.removeItem('claro_analista_selecionado');
+      localStorage.removeItem('claro_cq_auth_token');
+    }
+  };
+
+  const handleSelectProfile = async (profile: 'analista' | 'cq' | null) => {
     setCurrentProfile(profile);
     if (profile) {
       localStorage.setItem('claro_cq_profile', profile);
+      if (profile === 'cq' && selectedCQ?.id) {
+        await triggerServerLogin(selectedCQ.id, 'cq');
+      } else if (profile === 'analista' && selectedAnalista?.id) {
+        await triggerServerLogin(selectedAnalista.id, 'analista');
+      }
     } else {
       localStorage.removeItem('claro_cq_profile');
+      localStorage.removeItem('claro_cq_auth_token');
     }
     setCurrentView('home');
     setEditingEvaluation(null);

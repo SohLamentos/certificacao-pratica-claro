@@ -1,8 +1,8 @@
-import { initDb, initCertificacoes, Env, jsonResponse } from './_db';
+import { initDb, Env, jsonResponse } from './_db';
 
-export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
+export const onRequestGet: PagesFunction<Env> = async ({ env }) => {
   try {
-    await initCertificacoes(env.DB);
+    await initDb(env.DB);
     const { results } = await env.DB.prepare(
       "SELECT * FROM certificacoes ORDER BY id"
     ).all();
@@ -18,11 +18,11 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     }));
 
     return jsonResponse(mapped);
-  } catch (error) {
+  } catch (error: any) {
     return jsonResponse({
       success: false,
-      error: String(error),
-      route: request.url
+      error: "Falha ao recuperar certificações",
+      message: error.message
     }, 500);
   }
 };
@@ -45,12 +45,11 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     const lastId = result.meta?.last_row_id || (result as any).lastRowId;
 
     return jsonResponse({ success: true, id: String(lastId) });
-  } catch (error) {
+  } catch (error: any) {
     return jsonResponse({
       success: false,
-      error: String(error),
-      route: request.url
+      error: "Falha ao criar certificação",
+      message: error.message
     }, 500);
   }
 };
-

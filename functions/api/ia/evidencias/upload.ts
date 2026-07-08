@@ -38,7 +38,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     const finalPerfilUpload = perfil_usuario || "tecnico";
 
     // Generate login_hash using Web Crypto API
-    const salt = "claro_cq_lgpd_salt_2026";
+    const salt = env.LGPD_HASH_SALT || "claro_cq_lgpd_salt_2026_prod";
     const input = `${finalUserId}:${salt}`;
     const enc = new TextEncoder();
     const hashData = enc.encode(input);
@@ -85,12 +85,21 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       }
     }
 
-    // 2. Organizar chaves e salvar no R2
-    const timestamp = Date.now();
-    const uuid = crypto.randomUUID();
-    // Keep file extension aligned with mime_type if possible, fallback to webp
-    const extension = mime_type === 'image/jpeg' ? 'jpg' : mime_type === 'image/png' ? 'png' : 'webp';
-    const arquivo_key = `ia-evidencias/${certificacao_id}/${etapa}/${timestamp}-${uuid}.${extension}`;
+    // 2. Compute SHA-256 hash first for duplicate detection and link creation
+    const hashBuffer = await crypto.subtle.digest('SHA-256', fileBytes);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const ia_hash_arquivo = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+    // Query D1 to check if a file with the same SHA-256 hash already exists
+    const sameFileExisting = await env.DB.prepare(`
+      SELECT arquivo_url, arquivo_key FROM ia_evidencias 
+      WHERE ia_hash_arquivo = ? AND arquivo_url IS NOT NULL AND arquivo_url != ''
+      LIMIT 1
+    `).bind(ia_hash_arquivo).first() as any;
+
+    let arquivo_url = '';
+    let arquivo_key = '';
+    let isReusedAsset = false;
 
     // Standardize: Use only env.EVIDENCIAS_BUCKET
     let bucket: any = null;
@@ -102,21 +111,28 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       return jsonResponse({ success: false, error: "Serviço de Armazenamento R2 não configurado (EVIDENCIAS_BUCKET). Não é permitido salvar base64 no banco de dados." }, 500);
     }
 
-    let arquivo_url = '';
-    try {
-      await bucket.put(arquivo_key, fileBytes, {
-        httpMetadata: { contentType: mime_type }
-      });
-      arquivo_url = `/api/ia/evidencias/file?key=${encodeURIComponent(arquivo_key)}`;
-    } catch (uploadErr) {
-      console.error("R2 Upload Error:", uploadErr);
-      return jsonResponse({ success: false, error: "Erro ao enviar o arquivo para o armazenamento em nuvem (R2)." }, 500);
-    }
+    if (sameFileExisting) {
+      // Re-use existing asset link without uploading again!
+      arquivo_url = sameFileExisting.arquivo_url;
+      arquivo_key = sameFileExisting.arquivo_key;
+      isReusedAsset = true;
+    } else {
+      // Brand new file, upload to R2
+      const timestamp = Date.now();
+      const uuid = crypto.randomUUID();
+      const extension = mime_type === 'image/jpeg' ? 'jpg' : mime_type === 'image/png' ? 'png' : 'webp';
+      arquivo_key = `ia-evidencias/${certificacao_id}/${etapa}/${timestamp}-${uuid}.${extension}`;
 
-    // 3. Compute SHA-256 hash of raw file bytes for cost control and duplicate detection
-    const hashBuffer = await crypto.subtle.digest('SHA-256', fileBytes);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    const ia_hash_arquivo = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+      try {
+        await bucket.put(arquivo_key, fileBytes, {
+          httpMetadata: { contentType: mime_type }
+        });
+        arquivo_url = `/api/ia/evidencias/file?key=${encodeURIComponent(arquivo_key)}`;
+      } catch (uploadErr) {
+        console.error("R2 Upload Error:", uploadErr);
+        return jsonResponse({ success: false, error: "Erro ao enviar o arquivo para o armazenamento em nuvem (R2)." }, 500);
+      }
+    }
 
     // Determine current ID and handle replacing existing stage
     const existing = await env.DB.prepare(
@@ -125,9 +141,9 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 
     const currentId = existing ? existing.id : crypto.randomUUID();
 
-    if (existing) {
-      // Delete old file from R2 if present
-      if (bucket && existing.arquivo_key) {
+    if (existing && !isReusedAsset) {
+      // Only delete old file from R2 if we are actually writing a new R2 asset
+      if (bucket && existing.arquivo_key && existing.arquivo_key !== arquivo_key) {
         try {
           await bucket.delete(existing.arquivo_key);
         } catch (delErr) {
