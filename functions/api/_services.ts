@@ -122,6 +122,9 @@ export class EvidenceService {
     etapa: string,
     userPayload: { userId: string; perfil: string; loginHash: string }
   ): Promise<any> {
+    // Fetch existing evidence before update to detect divergence with IA
+    const existing = await db.prepare("SELECT * FROM ia_evidencias WHERE id = ?").bind(evidenceId).first() as any;
+
     // Save decision
     await db.prepare(`
       UPDATE ia_evidencias 
@@ -139,6 +142,92 @@ export class EvidenceService {
       perfil_usuario: userPayload.perfil,
       login_hash: userPayload.loginHash
     });
+
+    // Capture and save continuous learning feedback on divergence
+    if (existing && existing.resultado_ia) {
+      const iaResultNorm = String(existing.resultado_ia).toUpperCase();
+      let cqResultNorm = String(decisaoCq).toUpperCase();
+      if (cqResultNorm.startsWith('APROV')) cqResultNorm = 'APROVADO';
+      if (cqResultNorm.startsWith('REPROV')) cqResultNorm = 'REPROVADO';
+
+      const isDivergent = iaResultNorm !== cqResultNorm && (iaResultNorm === 'APROVADO' || iaResultNorm === 'REPROVADO');
+
+      if (isDivergent) {
+        const nowStr = new Date().toISOString();
+        try {
+          await db.prepare(`
+            INSERT INTO ia_feedback_treinamento (
+              evidencia_id, image_hash, resultado_ia, resultado_cq, correcao_cq, motivo_cq,
+              checklist_item, created_by, created_at, etapa, resultado_original_ia,
+              resultado_final_cq, motivo_divergencia, usar_como_exemplo
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+          `).bind(
+            evidenceId,
+            existing.ia_hash_arquivo || null,
+            existing.resultado_ia || null,
+            decisaoCq,
+            observacaoCq || 'Divergência apontada pelo CQ',
+            observacaoCq || 'Divergência apontada pelo CQ',
+            etapa,
+            userPayload.userId,
+            nowStr,
+            etapa,
+            existing.resultado_ia || null,
+            decisaoCq,
+            observacaoCq || 'Divergência apontada pelo CQ'
+          ).run();
+
+          // Check if there are 3 or more human corrections for this checklist item/etapa to generate a smart administrative suggestion
+          const countRes = await db.prepare(`
+            SELECT COUNT(*) as correctionsCount FROM ia_feedback_treinamento
+            WHERE (checklist_item = ? OR etapa = ?) AND (resultado_ia != resultado_cq OR resultado_original_ia != resultado_final_cq)
+          `).bind(etapa, etapa).first() as any;
+
+          const correctionsCount = countRes ? countRes.correctionsCount : 0;
+          if (correctionsCount >= 3) {
+            const existingSuggestion = await db.prepare(
+              "SELECT id FROM ia_sugestoes_admin WHERE checklist_item = ? AND status = 'PENDENTE'"
+            ).bind(etapa).first();
+
+            if (!existingSuggestion) {
+              await db.prepare(`
+                INSERT INTO ia_sugestoes_admin (id, checklist_item, mensagem, status, created_at)
+                VALUES (?, ?, ?, 'PENDENTE', ?)
+              `).bind(
+                crypto.randomUUID(),
+                etapa,
+                `O item de checklist "${etapa}" possui ${correctionsCount} divergências/correções humanas registradas. Considere revisar esta regra técnica na Knowledge Base para recalibrar a precisão da IA.`,
+                nowStr
+              ).run();
+            }
+          }
+        } catch (feedbackErr) {
+          console.error("Erro ao registrar feedback para aprendizado contínuo:", feedbackErr);
+        }
+      }
+
+      // Update decision history to record CQ confirmation / correction
+      const cq_confirmou = isDivergent ? 0 : 1;
+      const cq_corrigiu = isDivergent ? 1 : 0;
+      try {
+        await db.prepare(`
+          UPDATE ia_decision_history
+          SET cq_confirmou = ?,
+              cq_corrigiu = ?,
+              motivo_correcao = ?
+          WHERE (imagem_hash = ? OR id = ?) AND checklist = ?
+        `).bind(
+          cq_confirmou,
+          cq_corrigiu,
+          observacaoCq || null,
+          existing.ia_hash_arquivo || '',
+          evidenceId,
+          etapa
+        ).run();
+      } catch (historyUpdErr) {
+        console.error("Erro ao atualizar histórico em ia_decision_history:", historyUpdErr);
+      }
+    }
 
     // Check if certification is fully resolved
     const { results: allEvs } = await db.prepare(

@@ -1,7 +1,10 @@
 import { Env } from '../_db';
-import { Logger } from '../_logger';
+import { logEvent, LogLevel } from '../_logger';
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
+  const clientIp = request.headers.get("cf-connecting-ip") || request.headers.get("x-real-ip") || "127.0.0.1";
+  const userAgent = request.headers.get("user-agent") || "";
+
   try {
     const data = await request.json() as any;
     const { profile, userId, userName } = data;
@@ -52,7 +55,15 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 
     const token = `${encodedPayload}.${signatureHex}`;
 
-    Logger.info(`Sessão iniciada com sucesso para o usuário ${userId} (${profile})`);
+    await logEvent(env, {
+      tipo: LogLevel.LOGIN,
+      evento: `Sessão iniciada com sucesso para o usuário ${userId} (${profile})`,
+      usuario_id: userId,
+      perfil: profile,
+      ip: clientIp,
+      userAgent: userAgent,
+      metadata: { userName }
+    });
 
     return new Response(JSON.stringify({
       success: true,
@@ -73,7 +84,14 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     });
 
   } catch (err: any) {
-    Logger.error("Erro no endpoint de login", err);
+    await logEvent(env, {
+      tipo: LogLevel.ERROR,
+      evento: "Erro no endpoint de login",
+      ip: clientIp,
+      userAgent: userAgent,
+      metadata: { error: err.message || String(err) }
+    });
+
     return new Response(JSON.stringify({
       success: false,
       error: "Erro de Autenticação",

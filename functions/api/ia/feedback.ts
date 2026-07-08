@@ -39,18 +39,38 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       motivo_divergencia, 
       usar_como_exemplo,
       usuario_id,
-      perfil_usuario
+      perfil_usuario,
+      // Support new field names in incoming body too
+      image_hash: bodyImageHash,
+      resultado_ia,
+      resultado_cq,
+      correcao_cq,
+      motivo_cq,
+      checklist_item,
+      created_by
     } = body;
 
-    if (!evidencia_id || !etapa || !resultado_original_ia || !resultado_final_cq || !motivo_divergencia) {
-      return jsonResponse({ success: false, error: "Todos os campos obrigatórios devem ser preenchidos." }, 400);
+    if (!evidencia_id) {
+      return jsonResponse({ success: false, error: "O campo 'evidencia_id' é obrigatório." }, 400);
     }
 
-    const finalUserId = usuario_id || "cq_user";
+    const finalUserId = usuario_id || created_by || "cq_user";
     const finalPerfil = perfil_usuario || "cq";
 
+    // Lookup evidence to populate missing fields automatically
+    const ev = await env.DB.prepare(
+      "SELECT ia_hash_arquivo, resultado_ia, etapa FROM ia_evidencias WHERE id = ?"
+    ).bind(evidencia_id).first() as any;
+
+    const finalImageHash = bodyImageHash || (ev ? ev.ia_hash_arquivo : null);
+    const finalEtapa = etapa || checklist_item || (ev ? ev.etapa : "");
+    const finalResultadoOriginalIa = resultado_original_ia || resultado_ia || (ev ? ev.resultado_ia : "PENDENTE");
+    const finalResultadoFinalCq = resultado_final_cq || resultado_cq || "";
+    const finalMotivoDivergencia = motivo_divergencia || correcao_cq || motivo_cq || "";
+    const usarExemploInt = (usar_como_exemplo === true || usar_como_exemplo === 1 || usar_como_exemplo === undefined) ? 1 : 0;
+
     // Generate login_hash using Web Crypto API
-    const salt = "claro_cq_lgpd_salt_2026";
+    const salt = env.LGPD_HASH_SALT || "claro_cq_lgpd_salt_2026_prod";
     const input = `${finalUserId}:${salt}`;
     const enc = new TextEncoder();
     const hashData = enc.encode(input);
@@ -59,19 +79,27 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     const login_hash = hashArr.map(b => b.toString(16).padStart(2, '0')).join('');
 
     const id = crypto.randomUUID();
-    const usarExemploInt = (usar_como_exemplo === true || usar_como_exemplo === 1) ? 1 : 0;
 
     await env.DB.prepare(`
       INSERT INTO ia_feedback_treinamento (
-        id, evidencia_id, etapa, resultado_original_ia, resultado_final_cq, motivo_divergencia, usar_como_exemplo
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        id, evidencia_id, image_hash, resultado_ia, resultado_cq, correcao_cq, motivo_cq,
+        checklist_item, created_by, etapa, resultado_original_ia, resultado_final_cq,
+        motivo_divergencia, usar_como_exemplo
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       id,
       evidencia_id,
-      etapa,
-      resultado_original_ia,
-      resultado_final_cq,
-      motivo_divergencia,
+      finalImageHash,
+      finalResultadoOriginalIa,
+      finalResultadoFinalCq,
+      finalMotivoDivergencia, // correcao_cq
+      finalMotivoDivergencia, // motivo_cq
+      finalEtapa, // checklist_item
+      finalUserId,
+      finalEtapa,
+      finalResultadoOriginalIa,
+      finalResultadoFinalCq,
+      finalMotivoDivergencia,
       usarExemploInt
     ).run();
 
@@ -83,7 +111,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       0, // General audit
       evidencia_id,
       "FEEDBACK_TREINAMENTO_CRIADO",
-      JSON.stringify({ etapa, resultado_final_cq, motivo_divergencia }),
+      JSON.stringify({ etapa: finalEtapa, resultado_final_cq: finalResultadoFinalCq, motivo_divergencia: finalMotivoDivergencia }),
       finalUserId,
       finalPerfil,
       login_hash

@@ -1,4 +1,6 @@
 import { initDb, Env, jsonResponse } from '../../_db';
+import { getAppConfig } from '../../_config';
+import { logEvent, LogLevel } from '../../_logger';
 
 function scrubPersonalData(text: string): string {
   if (!text) return text;
@@ -14,8 +16,14 @@ function scrubPersonalData(text: string): string {
 }
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
+  const startTime = Date.now();
+  const clientIp = request.headers.get("cf-connecting-ip") || request.headers.get("x-real-ip") || "127.0.0.1";
+  const userAgent = request.headers.get("user-agent") || "";
+
   try {
     await initDb(env.DB);
+    const config = getAppConfig(env);
+
     const { evidencia_id, confirmado_pago, usuario_id, perfil_usuario } = await request.json() as { 
       evidencia_id: string; 
       confirmado_pago?: boolean;
@@ -105,18 +113,15 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       ).run();
 
       // Registrar auditoria para reuso de cache: ANALISE_IA_REUTILIZADA
-      await env.DB.prepare(`
-        INSERT INTO ia_auditoria (certificacao_id, evidencia_id, acao, payload, usuario_id, perfil_usuario, login_hash)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).bind(
-        evidence.certificacao_id,
-        evidencia_id,
-        "ANALISE_IA_REUTILIZADA",
-        JSON.stringify({ etapa: evidence.etapa, modelo: cachedEvidence.ia_modelo, hash: ia_hash_arquivo }),
-        finalUserId,
-        finalPerfil,
-        login_hash
-      ).run();
+      await logEvent(env, {
+        tipo: LogLevel.INFO,
+        evento: `Análise IA de etapa ${evidence.etapa} reaproveitada via cache`,
+        usuario_id: finalUserId,
+        perfil: finalPerfil,
+        ip: clientIp,
+        userAgent,
+        metadata: { evidencia_id, hash: ia_hash_arquivo }
+      });
 
       // Buscar registro atualizado
       const updatedRecord = await env.DB.prepare("SELECT * FROM ia_evidencias WHERE id = ?").bind(evidencia_id).first() as any;
@@ -128,52 +133,52 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       });
     }
 
-    // 5. Validar limites configuráveis diários/mensais ABSOLUTOS (Bloqueio duro se atingido)
-    const MAX_IA_DIA = Number(env.MAX_ANALISES_IA_DIA || 50);
-    const MAX_IA_MES = Number(env.MAX_ANALISES_IA_MES || 1000);
-
+    // 5. Validar limites de IA (Bloqueio duro se atingido)
     const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
     const monthStr = todayStr.substring(0, 7); // YYYY-MM
 
-    const { count_dia } = await env.DB.prepare(`
-      SELECT COUNT(*) as count_dia FROM ia_evidencias
-      WHERE ia_analisado_em LIKE ? AND ia_origem IN ('AUTOMATICA', 'MANUAL')
+    // Query daily and monthly active executions
+    const { count_ia_dia } = await env.DB.prepare(`
+      SELECT COUNT(*) as count_ia_dia FROM ia_analises_logs
+      WHERE ia_requested_at LIKE ? AND ia_status = 'SUCESSO'
     `).bind(`${todayStr}%`).first() as any;
 
-    const { count_mes } = await env.DB.prepare(`
-      SELECT COUNT(*) as count_mes FROM ia_evidencias
-      WHERE ia_analisado_em LIKE ? AND ia_origem IN ('AUTOMATICA', 'MANUAL')
+    const { count_ia_mes } = await env.DB.prepare(`
+      SELECT COUNT(*) as count_ia_mes FROM ia_analises_logs
+      WHERE ia_requested_at LIKE ? AND ia_status = 'SUCESSO'
     `).bind(`${monthStr}%`).first() as any;
 
-    if (count_dia >= MAX_IA_DIA || count_mes >= MAX_IA_MES) {
+    const { count_ia_user_dia } = await env.DB.prepare(`
+      SELECT COUNT(*) as count_ia_user_dia FROM ia_analises_logs
+      WHERE ia_requested_at LIKE ? AND ia_requested_by = ? AND ia_status = 'SUCESSO'
+    `).bind(`${todayStr}%`, finalUserId).first() as any;
+
+    if ((count_ia_dia || 0) >= config.MAX_ANALISES_IA_DIA || (count_ia_mes || 0) >= config.MAX_ANALISES_IA_MES) {
+      await logEvent(env, {
+        tipo: LogLevel.WARNING,
+        evento: `Tentativa de acionar IA bloqueada por cota diária/mensal excedida`,
+        usuario_id: finalUserId,
+        perfil: finalPerfil,
+        ip: clientIp,
+        userAgent,
+        metadata: { count_ia_dia, max: config.MAX_ANALISES_IA_DIA }
+      });
       return jsonResponse({
         success: false,
-        error: "Limite de análises IA atingido. Faça revisão manual."
+        error: "Limite global de análises IA atingido. Faça revisão manual."
       }, 429);
     }
 
-    // 6. Verificar se a análise consumirá créditos (Paid Mode)
-    const rawAutoGratis = env.ia_modo_automatico_gratis;
-    const isAutoGratis = rawAutoGratis === undefined ? true : (rawAutoGratis === true || rawAutoGratis === 1 || String(rawAutoGratis).toLowerCase() === 'true');
-    const limitDia = env.ia_limite_gratuito_diario !== undefined ? Number(env.ia_limite_gratuito_diario) : 10;
-    const limitMes = env.ia_limite_gratuito_mensal !== undefined ? Number(env.ia_limite_gratuito_mensal) : 200;
+    if ((count_ia_user_dia || 0) >= config.MAX_ANALISES_IA_POR_USUARIO_DIA) {
+      return jsonResponse({
+        success: false,
+        error: "Limite diário de análises IA por usuário excedido. Faça revisão manual."
+      }, 429);
+    }
 
-    // Contar análises gratuitas automáticas hoje/mês
-    const { count_gratis_dia } = await env.DB.prepare(`
-      SELECT COUNT(*) as count_gratis_dia FROM ia_evidencias
-      WHERE ia_analisado_em LIKE ? AND ia_origem = 'AUTOMATICA'
-    `).bind(`${todayStr}%`).first() as any;
-
-    const { count_gratis_mes } = await env.DB.prepare(`
-      SELECT COUNT(*) as count_gratis_mes FROM ia_evidencias
-      WHERE ia_analisado_em LIKE ? AND ia_origem = 'AUTOMATICA'
-    `).bind(`${monthStr}%`).first() as any;
-
-    const isPaid = !isAutoGratis || (count_gratis_dia >= limitDia) || (count_gratis_mes >= limitMes);
-
-    const rawExigirConfirmacao = env.ia_exigir_confirmacao_quando_pago;
-    const exigirConfirmacao = rawExigirConfirmacao === undefined ? true : (rawExigirConfirmacao === true || rawExigirConfirmacao === 1 || String(rawExigirConfirmacao).toLowerCase() === 'true');
-
+    // 6. Verificar se exige confirmação de cobrança
+    const isPaid = (count_ia_dia || 0) >= 10; // Simple check for free tier limit
+    const exigirConfirmacao = env.ia_exigir_confirmacao_quando_pago === undefined ? true : (env.ia_exigir_confirmacao_quando_pago === true || env.ia_exigir_confirmacao_quando_pago === 1 || String(env.ia_exigir_confirmacao_quando_pago).toLowerCase() === 'true');
     if (isPaid && exigirConfirmacao && !confirmado_pago) {
       return jsonResponse({
         success: false,
@@ -201,23 +206,57 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       console.warn("LGPD minimization setting not read, using true by default", e);
     }
 
-    const rulesQuery = await env.DB.prepare(`
-      SELECT * FROM ia_regras_itens
-      WHERE etapa = ?
-        AND ativo = 1
-        AND (tipo_certificacao IS NULL OR tipo_certificacao = '' OR tipo_certificacao = ?)
-      ORDER BY peso DESC
-    `).bind(evidence.etapa, certNome).all();
-    const rules = rulesQuery.results || [];
+    let rules: any[] = [];
+    let ruleSource = 'ia_regras_itens';
 
-    // Query human feedback training examples for this stage
+    if (config.ENABLE_KNOWLEDGE_BASE) {
+      try {
+        const kbQuery = await env.DB.prepare(`
+          SELECT 
+            id, tipo_certificacao, categoria, checklist_item, 
+            titulo, descricao, regra as criterios_conformidade, 
+            prioridade as peso
+          FROM knowledge_base
+          WHERE ativo = 1
+            AND (tipo_certificacao IS NULL OR tipo_certificacao = '' OR tipo_certificacao = ?)
+            AND (checklist_item IS NULL OR checklist_item = '' OR checklist_item = ?)
+          ORDER BY prioridade DESC
+        `).bind(certNome, evidence.etapa).all();
+        
+        if (kbQuery.results && kbQuery.results.length > 0) {
+          rules = kbQuery.results;
+          ruleSource = 'knowledge_base';
+        }
+      } catch (err) {
+        console.error("Erro ao carregar regras da Knowledge Base, usando fallback:", err);
+      }
+    }
+
+    // Fallback if Knowledge Base is disabled or returned no rules
+    if (rules.length === 0) {
+      try {
+        const rulesQuery = await env.DB.prepare(`
+          SELECT * FROM ia_regras_itens
+          WHERE etapa = ?
+            AND ativo = 1
+            AND (tipo_certificacao IS NULL OR tipo_certificacao = '' OR tipo_certificacao = ?)
+          ORDER BY peso DESC
+        `).bind(evidence.etapa, certNome).all();
+        rules = rulesQuery.results || [];
+      } catch (err) {
+        console.error("Erro ao carregar regras antigas:", err);
+      }
+    }
+
+    // Query human feedback training examples for this stage (Supervised learning)
     const feedbackQuery = await env.DB.prepare(`
-      SELECT resultado_original_ia, resultado_final_cq, motivo_divergencia
+      SELECT resultado_ia, resultado_cq, correcao_cq, motivo_cq, checklist_item,
+             resultado_original_ia, resultado_final_cq, motivo_divergencia
       FROM ia_feedback_treinamento
-      WHERE etapa = ? AND usar_como_exemplo = 1
+      WHERE (checklist_item = ? OR etapa = ?) AND usar_como_exemplo = 1
       ORDER BY created_at DESC
       LIMIT 5
-    `).bind(evidence.etapa).all();
+    `).bind(evidence.etapa, evidence.etapa).all();
     const feedbacks = feedbackQuery.results || [];
 
     let promptText = "";
@@ -293,9 +332,9 @@ Responda exclusivamente no formato JSON:
       promptText += `Abaixo estão exemplos reais de auditoria onde um auditor humano de Controle de Qualidade corrigiu a IA nesta etapa ("${evidence.etapa}"). Utilize-os para recalibrar o seu julgamento e garantir a máxima conformidade técnica:\n`;
       for (let i = 0; i < feedbacks.length; i++) {
         const fb = feedbacks[i];
-        let originalIa = fb.resultado_original_ia;
-        let finalCq = fb.resultado_final_cq;
-        let motivo = fb.motivo_divergencia;
+        let originalIa = fb.resultado_ia || fb.resultado_original_ia || "";
+        let finalCq = fb.resultado_cq || fb.resultado_final_cq || "";
+        let motivo = fb.correcao_cq || fb.motivo_cq || fb.motivo_divergencia || "";
 
         if (isMinimizacaoAtiva) {
           originalIa = scrubPersonalData(originalIa);
@@ -320,6 +359,9 @@ Responda exclusivamente no formato JSON:
     let ia_modelo = "Nenhum (Serviço Offline)";
     let ia_custo_estimado = 0.0;
     let fallbackAtivo = false;
+    let aiResponseStr = "";
+    let aiError: any = null;
+    let ia_error_code: string | null = null;
 
     const bucket = env.EVIDENCIAS_BUCKET;
     if (env.AI && typeof env.AI.run === 'function' && bucket) {
@@ -329,20 +371,57 @@ Responda exclusivamente no formato JSON:
           const imageBuffer = await object.arrayBuffer();
           const imageArray = Array.from(new Uint8Array(imageBuffer));
 
-          const response = await env.AI.run("@cf/meta/llama-3.2-11b-vision-instruct", {
-            prompt: promptText,
-            image: imageArray
-          });
+          const modelUsed = "@cf/meta/llama-3.2-11b-vision-instruct";
+
+          // Resilient retry logic for manual trigger
+          try {
+            const response = await env.AI.run(modelUsed, {
+              prompt: promptText,
+              image: imageArray
+            });
+            aiResponseStr = typeof response === 'string' ? response : JSON.stringify(response);
+          } catch (firstErr: any) {
+            console.warn("First manual trigger AI call failed, retrying once in 1.5 seconds...", firstErr);
+            await new Promise(resolve => setTimeout(resolve, 1500));
+            try {
+              const response = await env.AI.run(modelUsed, {
+                prompt: promptText,
+                image: imageArray
+              });
+              aiResponseStr = typeof response === 'string' ? response : JSON.stringify(response);
+            } catch (secErr: any) {
+              aiError = secErr;
+              ia_error_code = secErr.message || "TIMEOUT_NETWORK_ERROR";
+            }
+          }
+
+          // Log versioning
+          await env.DB.prepare(`
+            INSERT INTO ia_analises_logs (
+              evidencia_id, ia_model, ia_prompt_version, ia_requested_by, ia_requested_at,
+              ia_status, ia_tokens_estimated, ia_result_json, ia_error_code
+            ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)
+          `).bind(
+            evidencia_id,
+            modelUsed,
+            "1.1.0-manual",
+            finalUserId,
+            aiError ? 'FALHA' : 'SUCESSO',
+            350,
+            aiResponseStr || null,
+            ia_error_code
+          ).run();
+
+          if (aiError) {
+            throw aiError;
+          }
 
           let parsed: any = null;
-          if (typeof response === 'string') {
-            parsed = JSON.parse(response);
-          } else if (response && typeof response === 'object') {
-            const textContent = (response as any).response || (response as any).text;
-            if (textContent) {
-              const jsonMatch = textContent.match(/\{[\s\S]*\}/);
-              if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
-            }
+          const jsonMatch = aiResponseStr.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            parsed = JSON.parse(jsonMatch[0]);
+          } else {
+            parsed = JSON.parse(aiResponseStr);
           }
 
           if (parsed && typeof parsed === 'object') {
@@ -350,7 +429,7 @@ Responda exclusivamente no formato JSON:
             status_ia = parsed.aprovado ? 'APROVADO_IA' : 'REPROVADO_IA';
             confianca_ia = typeof parsed.confianca === 'number' ? parsed.confianca : 0.90;
             justificativa_ia = parsed.justificativa || "Análise concluída via Workers AI.";
-            ia_modelo = "@cf/meta/llama-3.2-11b-vision-instruct";
+            ia_modelo = modelUsed;
             ia_custo_estimado = isPaid ? 0.0050 : 0.0000;
           } else {
             throw new Error("Resposta inválida da API do Workers AI");
@@ -370,12 +449,13 @@ Responda exclusivamente no formato JSON:
       status_ia = 'PENDENTE_ANALISE';
       resultado_ia = 'FALHA DE PROCESSAMENTO IA';
       confianca_ia = 0.0;
-      justificativa_ia = "Aviso: O serviço de análise de IA (Workers AI) está indisponível ou falhou. Esta evidência foi direcionada para REVISÃO MANUAL obrigatória pelo CQ. Por favor, tome a decisão manualmente.";
+      justificativa_ia = "Aviso: O serviço de análise de IA está indisponível ou falhou. Esta evidência foi direcionada para REVISÃO MANUAL obrigatória pelo CQ. Por favor, tome a decisão manualmente.";
       ia_modelo = "Workers AI Offline";
       ia_custo_estimado = 0.0;
     }
 
     const nowStr = new Date().toISOString();
+    const confidenceScore = Math.round(confianca_ia * 100);
 
     // 8. Salvar resposta da IA no D1
     await env.DB.prepare(`
@@ -383,6 +463,7 @@ Responda exclusivamente no formato JSON:
       SET status_ia = ?,
           resultado_ia = ?,
           confianca_ia = ?,
+          confidence_score = ?,
           justificativa_ia = ?,
           ia_analisado_em = ?,
           ia_modelo = ?,
@@ -395,6 +476,7 @@ Responda exclusivamente no formato JSON:
       status_ia,
       resultado_ia,
       confianca_ia,
+      confidenceScore,
       justificativa_ia,
       nowStr,
       ia_modelo,
@@ -403,26 +485,51 @@ Responda exclusivamente no formato JSON:
       evidencia_id
     ).run();
 
+    // 8b. Gravar histórico detalhado de decisões da IA (ia_decision_history)
+    const historyId = crypto.randomUUID();
+    const processTime = Date.now() - startTime;
+    try {
+      await env.DB.prepare(`
+        INSERT INTO ia_decision_history (
+          id, imagem_hash, modelo, versao_prompt, confidence, resultado,
+          tempo_processamento, usuario, certificacao, checklist,
+          cq_confirmou, cq_corrigiu, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
+      `).bind(
+        historyId,
+        ia_hash_arquivo || '',
+        ia_modelo || 'Nenhum',
+        "1.2.0-knowledge",
+        confidenceScore,
+        resultado_ia || 'FALHA DE PROCESSAMENTO IA',
+        processTime,
+        finalUserId,
+        certNome || 'GPON Veterano',
+        evidence.etapa,
+        nowStr
+      ).run();
+    } catch (historyErr) {
+      console.error("Erro ao gravar histórico em ia_decision_history:", historyErr);
+    }
+
     // 9. Log auditoria de análise realizada
-    await env.DB.prepare(`
-      INSERT INTO ia_auditoria (certificacao_id, evidencia_id, acao, payload, usuario_id, perfil_usuario, login_hash)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).bind(
-      evidence.certificacao_id,
-      evidencia_id,
-      fallbackAtivo ? "IA_FALHA_PROCESSAMENTO" : "IA_ANALISE_COMPLETA",
-      JSON.stringify({
+    await logEvent(env, {
+      tipo: fallbackAtivo ? LogLevel.ERROR : LogLevel.INFO,
+      evento: fallbackAtivo ? `Falha de processamento na análise manual por IA` : `Análise manual por IA concluída`,
+      usuario_id: finalUserId,
+      perfil: finalPerfil,
+      ip: clientIp,
+      userAgent,
+      metadata: {
         etapa: evidence.etapa,
         modelo: ia_modelo,
         custo: ia_custo_estimado,
         origem: 'MANUAL',
         regras_usadas: ruleIdsUsed,
-        erro: fallbackAtivo ? "Serviço Workers AI indisponível ou falhou durante execução" : undefined
-      }),
-      finalUserId,
-      finalPerfil,
-      login_hash
-    ).run();
+        confidence_score: confidenceScore,
+        erro: fallbackAtivo ? "Serviço Workers AI indisponível ou falhou" : undefined
+      }
+    });
 
     // Buscar registro updated
     const updatedRecord = await env.DB.prepare("SELECT * FROM ia_evidencias WHERE id = ?").bind(evidencia_id).first() as any;
@@ -430,7 +537,10 @@ Responda exclusivamente no formato JSON:
     return jsonResponse({
       success: true,
       reused: false,
-      evidence: updatedRecord
+      evidence: {
+        ...updatedRecord,
+        confidence_score: confidenceScore // make sure it's returned on the object
+      }
     });
 
   } catch (err: any) {

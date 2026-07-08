@@ -773,19 +773,38 @@ export default function CertificacaoIAView({
                               <p className="text-slate-500 text-xs leading-snug">{activeEvidence.justificativa_ia}</p>
                             </div>
 
-                            {activeEvidence.confianca_ia !== null && activeEvidence.confianca_ia !== undefined && (
-                              <div className="flex items-center gap-2 pt-1">
-                                <div className="flex-grow bg-slate-100 h-2 rounded-full overflow-hidden">
-                                  <div 
-                                    className="bg-amber-500 h-full rounded-full" 
-                                    style={{ width: `${activeEvidence.confianca_ia * 100 > 100 ? activeEvidence.confianca_ia : activeEvidence.confianca_ia * 100}%` }}
-                                  ></div>
+                            {activeEvidence.confianca_ia !== null && activeEvidence.confianca_ia !== undefined && (() => {
+                              const pct = Math.round(activeEvidence.confianca_ia * 100 > 100 ? activeEvidence.confianca_ia : activeEvidence.confianca_ia * 100);
+                              let classification = { text: 'Alta Confiança', color: 'bg-emerald-50 text-emerald-700 border-emerald-100' };
+                              if (pct < 50) {
+                                classification = { text: 'Revisão Obrigatória', color: 'bg-rose-100 text-rose-800 border-rose-200 font-bold' };
+                              } else if (pct < 70) {
+                                classification = { text: 'Baixa Confiança', color: 'bg-orange-50 text-orange-700 border-orange-100' };
+                              } else if (pct < 90) {
+                                classification = { text: 'Média Confiança', color: 'bg-amber-50 text-amber-700 border-amber-100' };
+                              }
+                              return (
+                                <div className="space-y-1.5 pt-1">
+                                  <div className="flex items-center justify-between text-[10px]">
+                                    <span className="text-slate-400 font-bold">Nível de Confiança:</span>
+                                    <span className={`px-1.5 py-0.5 rounded border text-[9px] ${classification.color}`}>
+                                      {classification.text}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <div className="flex-grow bg-slate-100 h-2 rounded-full overflow-hidden">
+                                      <div 
+                                        className={`h-full rounded-full ${pct < 50 ? 'bg-rose-500' : pct < 70 ? 'bg-orange-500' : pct < 90 ? 'bg-amber-500' : 'bg-emerald-500'}`} 
+                                        style={{ width: `${pct}%` }}
+                                      ></div>
+                                    </div>
+                                    <span className="text-[10px] font-black text-slate-500">
+                                      {pct}%
+                                    </span>
+                                  </div>
                                 </div>
-                                <span className="text-[10px] font-black text-slate-500">
-                                  {Math.round(activeEvidence.confianca_ia * 100 > 100 ? activeEvidence.confianca_ia : activeEvidence.confianca_ia * 100)}%
-                                </span>
-                              </div>
-                            )}
+                              );
+                            })()}
 
                             {/* Additional technical audit fields */}
                             <div className="border-t border-slate-100 pt-2 mt-2 grid grid-cols-2 gap-x-4 gap-y-1.5 text-[10px] font-mono text-slate-400">

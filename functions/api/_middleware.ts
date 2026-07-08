@@ -5,9 +5,30 @@ import { Logger } from './_logger';
 export const onRequest: PagesFunction<Env> = async (context) => {
   const { request, env } = context;
   const url = new URL(request.url);
+  const clientIp = request.headers.get("cf-connecting-ip") || request.headers.get("x-real-ip") || "127.0.0.1";
 
-  // 1. Public Authentication Route Bypass
+  // Ensure D1 database is initialized
+  try {
+    await initDb(env.DB);
+  } catch (err) {
+    Logger.error("Falha fatal ao inicializar banco de dados D1", err);
+  }
+
+  // 1. Public Authentication Route Bypass with Rate Limiting (20/min per IP)
   if (url.pathname.startsWith('/api/auth/login')) {
+    try {
+      const { applyRateLimit } = await import('./_ratelimit');
+      const rateLimitResult = await applyRateLimit(env, 'login', clientIp);
+      if (!rateLimitResult.allowed) {
+        return jsonResponse({
+          success: false,
+          error: "Muitas solicitações",
+          message: "Limite de tentativas de login excedido. Tente novamente em 1 minuto."
+        }, 429);
+      }
+    } catch (e) {
+      Logger.error("Erro na validação de rate limit no login", e);
+    }
     return await context.next();
   }
 
@@ -15,9 +36,6 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   // (Always validate token for file downloads too, as demanded: "Todas as rotas devem validar autenticação")
   
   try {
-    // Ensure the D1 database is initialized (triggers migration exactly once)
-    await initDb(env.DB);
-
     // Validate request headers
     const authHeader = request.headers.get("Authorization");
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -42,6 +60,21 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         message: "Sua sessão segura expirou ou é inválida. Por favor, faça login novamente.",
         data: null
       }, 401);
+    }
+
+    // Apply General API Rate Limiting (100/min per user or IP)
+    try {
+      const { applyRateLimit } = await import('./_ratelimit');
+      const rateLimitResult = await applyRateLimit(env, 'general', userPayload.id || clientIp);
+      if (!rateLimitResult.allowed) {
+        return jsonResponse({
+          success: false,
+          error: "Muitas solicitações",
+          message: "Limite de requisições excedido. Tente novamente em 1 minuto."
+        }, 429);
+      }
+    } catch (e) {
+      Logger.error("Erro na validação de rate limit geral", e);
     }
 
     // Role-based authorization controls

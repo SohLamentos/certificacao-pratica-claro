@@ -123,6 +123,7 @@ export const DBSchema: TableSchema[] = [
       { name: 'ia_modelo', type: 'TEXT' },
       { name: 'ia_custo_estimado', type: 'REAL', defaultValue: '0.0' },
       { name: 'ia_hash_arquivo', type: 'TEXT' },
+      { name: 'image_signature', type: 'TEXT' },
       { name: 'ia_origem', type: 'TEXT', defaultValue: "'AUTOMATICA'" },
       { name: 'imagem_repetida', type: 'INTEGER', defaultValue: '0' },
       { name: 'imagem_repetida_alerta', type: 'TEXT' },
@@ -164,10 +165,19 @@ export const DBSchema: TableSchema[] = [
     columns: [
       { name: 'id', type: 'INTEGER', primaryKey: true, autoIncrement: true },
       { name: 'evidencia_id', type: 'TEXT', nullable: false },
-      { name: 'etapa', type: 'TEXT', nullable: false },
-      { name: 'resultado_esperado', type: 'TEXT', nullable: false },
-      { name: 'justificativa_treinamento', type: 'TEXT', nullable: false },
-      { name: 'created_at', type: 'TEXT' }
+      { name: 'image_hash', type: 'TEXT' },
+      { name: 'resultado_ia', type: 'TEXT' },
+      { name: 'resultado_cq', type: 'TEXT' },
+      { name: 'correcao_cq', type: 'TEXT' },
+      { name: 'motivo_cq', type: 'TEXT' },
+      { name: 'checklist_item', type: 'TEXT' },
+      { name: 'created_by', type: 'TEXT' },
+      { name: 'created_at', type: 'TEXT' },
+      { name: 'etapa', type: 'TEXT' },
+      { name: 'resultado_original_ia', type: 'TEXT' },
+      { name: 'resultado_final_cq', type: 'TEXT' },
+      { name: 'motivo_divergencia', type: 'TEXT' },
+      { name: 'usar_como_exemplo', type: 'INTEGER', defaultValue: '1' }
     ]
   },
   {
@@ -177,6 +187,111 @@ export const DBSchema: TableSchema[] = [
       { name: 'nome_chave', type: 'TEXT', nullable: false },
       { name: 'habilitado', type: 'INTEGER', defaultValue: '1' },
       { name: 'descricao', type: 'TEXT' }
+    ]
+  },
+  {
+    tableName: 'app_logs',
+    columns: [
+      { name: 'id', type: 'INTEGER', primaryKey: true, autoIncrement: true },
+      { name: 'tipo', type: 'TEXT', nullable: false },
+      { name: 'evento', type: 'TEXT', nullable: false },
+      { name: 'usuario_id', type: 'TEXT' },
+      { name: 'perfil', type: 'TEXT' },
+      { name: 'ip_hash', type: 'TEXT' },
+      { name: 'user_agent_hash', type: 'TEXT' },
+      { name: 'created_at', type: 'TEXT', defaultValue: 'CURRENT_TIMESTAMP' },
+      { name: 'metadata_json', type: 'TEXT' }
+    ]
+  },
+  {
+    tableName: 'image_ref_counts',
+    columns: [
+      { name: 'image_hash', type: 'TEXT', primaryKey: true },
+      { name: 'r2_key', type: 'TEXT', nullable: false },
+      { name: 'ref_count', type: 'INTEGER', defaultValue: '1' },
+      { name: 'created_at', type: 'TEXT', defaultValue: 'CURRENT_TIMESTAMP' },
+      { name: 'last_used_at', type: 'TEXT', defaultValue: 'CURRENT_TIMESTAMP' }
+    ]
+  },
+  {
+    tableName: 'ia_analises_logs',
+    columns: [
+      { name: 'id', type: 'INTEGER', primaryKey: true, autoIncrement: true },
+      { name: 'evidencia_id', type: 'TEXT', nullable: false },
+      { name: 'ia_model', type: 'TEXT' },
+      { name: 'ia_prompt_version', type: 'TEXT' },
+      { name: 'ia_requested_by', type: 'TEXT' },
+      { name: 'ia_requested_at', type: 'TEXT', defaultValue: 'CURRENT_TIMESTAMP' },
+      { name: 'ia_status', type: 'TEXT' },
+      { name: 'ia_tokens_estimated', type: 'INTEGER' },
+      { name: 'ia_result_json', type: 'TEXT' },
+      { name: 'ia_error_code', type: 'TEXT' }
+    ]
+  },
+  {
+    tableName: 'rate_limits',
+    columns: [
+      { name: 'key', type: 'TEXT', primaryKey: true },
+      { name: 'value', type: 'INTEGER' },
+      { name: 'expires_at', type: 'INTEGER' }
+    ]
+  },
+  {
+    tableName: 'knowledge_base',
+    columns: [
+      { name: 'id', type: 'TEXT', primaryKey: true },
+      { name: 'tipo_certificacao', type: 'TEXT' },
+      { name: 'categoria', type: 'TEXT' },
+      { name: 'checklist_item', type: 'TEXT' },
+      { name: 'titulo', type: 'TEXT', nullable: false },
+      { name: 'descricao', type: 'TEXT' },
+      { name: 'regra', type: 'TEXT' },
+      { name: 'prioridade', type: 'INTEGER', defaultValue: '1' },
+      { name: 'ativo', type: 'INTEGER', defaultValue: '1' },
+      { name: 'criado_por', type: 'TEXT' },
+      { name: 'atualizado_por', type: 'TEXT' },
+      { name: 'created_at', type: 'TEXT' },
+      { name: 'updated_at', type: 'TEXT' }
+    ]
+  },
+  {
+    tableName: 'knowledge_versions',
+    columns: [
+      { name: 'id', type: 'TEXT', primaryKey: true },
+      { name: 'knowledge_id', type: 'TEXT', nullable: false },
+      { name: 'versao', type: 'INTEGER', nullable: false },
+      { name: 'alteracao', type: 'TEXT' },
+      { name: 'usuario', type: 'TEXT' },
+      { name: 'created_at', type: 'TEXT' }
+    ]
+  },
+  {
+    tableName: 'ia_decision_history',
+    columns: [
+      { name: 'id', type: 'TEXT', primaryKey: true },
+      { name: 'imagem_hash', type: 'TEXT' },
+      { name: 'modelo', type: 'TEXT' },
+      { name: 'versao_prompt', type: 'TEXT' },
+      { name: 'confidence', type: 'REAL' },
+      { name: 'resultado', type: 'TEXT' },
+      { name: 'tempo_processamento', type: 'INTEGER' },
+      { name: 'usuario', type: 'TEXT' },
+      { name: 'certificacao', type: 'TEXT' },
+      { name: 'checklist', type: 'TEXT' },
+      { name: 'cq_confirmou', type: 'INTEGER', defaultValue: '0' },
+      { name: 'cq_corrigiu', type: 'INTEGER', defaultValue: '0' },
+      { name: 'motivo_correcao', type: 'TEXT' },
+      { name: 'created_at', type: 'TEXT' }
+    ]
+  },
+  {
+    tableName: 'ia_sugestoes_admin',
+    columns: [
+      { name: 'id', type: 'TEXT', primaryKey: true },
+      { name: 'checklist_item', type: 'TEXT', nullable: false },
+      { name: 'mensagem', type: 'TEXT', nullable: false },
+      { name: 'status', type: 'TEXT', defaultValue: "'PENDENTE'" },
+      { name: 'created_at', type: 'TEXT' }
     ]
   }
 ];

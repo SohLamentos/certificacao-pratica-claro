@@ -1,0 +1,44 @@
+# Cloudflare Wrangler Configuration File for Claro CQ Portal
+name = "claro-cq-portal"
+pages_build_output_dir = "dist"
+compatibility_date = "2026-07-08"
+
+[vars]
+MAX_ANALISES_IA_DIA = "100"
+MAX_ANALISES_IA_MES = "3000"
+ia_modo_automatico_gratis = "true"
+ia_exigir_confirmacao_quando_pago = "true"
+ia_limite_gratuito_diario = "50"
+ia_limite_gratuito_mensal = "1500"
+LGPD_HASH_SALT = "claro_cq_lgpd_salt_2026_prod"
+
+# Cloudflare D1 Database Binding
+[[d1_databases]]
+binding = "DB"
+database_name = "claro-cq-d1"
+database_id = "SEU_DATABASE_ID_AQUI" # Substituir com o ID real após criar o D1
+migrations_dir = "migrations"
+
+# Cloudflare R2 Storage Binding for Evidence Uploads
+[[r2_buckets]]
+binding = "EVIDENCIAS_BUCKET"
+bucket_name = "claro-cq-evidencias"
+
+# Cloudflare KV Namespace Binding for cache, audit logs and rate-limiting
+[[kv_namespaces]]
+binding = "CLARO_KV"
+id = "SEU_KV_NAMESPACE_ID_AQUI" # Substituir com o ID real após criar o KV
+
+# Cloudflare Durable Objects Binding for real-time WebSocket communication
+[[durable_objects.bindings]]
+name = "RealtimeHub"
+class_name = "RealtimeHub"
+
+# Durable Objects Migrations (necessary for registering the DO class)
+[[migrations]]
+tag = "v1"
+new_classes = ["RealtimeHub"]
+
+# Cloudflare Workers AI Binding
+[ai]
+binding = "AI"

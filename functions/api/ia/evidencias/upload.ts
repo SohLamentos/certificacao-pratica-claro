@@ -1,4 +1,7 @@
 import { initDb, Env, jsonResponse } from '../../_db';
+import { getAppConfig } from '../../_config';
+import { logEvent, LogLevel } from '../../_logger';
+import { applyRateLimit } from '../../_ratelimit';
 
 function base64ToUint8Array(base64String: string): Uint8Array {
   const base64Data = base64String.includes(',') ? base64String.split(',')[1] : base64String;
@@ -11,9 +14,33 @@ function base64ToUint8Array(base64String: string): Uint8Array {
   return bytes;
 }
 
+async function computeHMAC(text: string, secret: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(secret);
+  const key = await crypto.subtle.importKey(
+    "raw",
+    keyData,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signatureBuffer = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    encoder.encode(text)
+  );
+  const signatureArray = Array.from(new Uint8Array(signatureBuffer));
+  return signatureArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
+  const clientIp = request.headers.get("cf-connecting-ip") || request.headers.get("x-real-ip") || "127.0.0.1";
+  const userAgent = request.headers.get("user-agent") || "";
+
   try {
     await initDb(env.DB);
+    const config = getAppConfig(env);
+
     const data = await request.json() as any;
 
     const {
@@ -36,6 +63,21 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 
     const finalUserId = usuario_id || "tecnico-user";
     const finalPerfilUpload = perfil_usuario || "tecnico";
+
+    // 1. Apply rate limit on file upload (max 5 uploads per minute per user)
+    const rateLimitRes = await applyRateLimit(env, "upload", finalUserId);
+    if (!rateLimitRes.allowed) {
+      await logEvent(env, {
+        tipo: LogLevel.WARNING,
+        evento: `Tentativa de upload bloqueada por rate limit para o usuário ${finalUserId}`,
+        usuario_id: finalUserId,
+        perfil: finalPerfilUpload,
+        ip: clientIp,
+        userAgent,
+        metadata: { certificacao_id, etapa }
+      });
+      return jsonResponse({ success: false, error: "Limite de uploads excedido. Permitido no máximo 5 uploads por minuto." }, 429);
+    }
 
     // Generate login_hash using Web Crypto API
     const salt = env.LGPD_HASH_SALT || "claro_cq_lgpd_salt_2026_prod";
@@ -63,9 +105,9 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       return jsonResponse({ success: false, error: "Os dados decodificados do arquivo excedem o limite de 1 MB." }, 400);
     }
 
-    // 1. Valida se certificação (avaliação) existe e se o modo é IA_ASSISTIDA
+    // Valida se certificação (avaliação) existe e se o modo é IA_ASSISTIDA
     const avaliacao = await env.DB.prepare(
-      "SELECT id, status, modo_certificacao, certificacao_id FROM avaliacoes WHERE id = ?"
+      "SELECT id, status, modo_certificacao, certificacao_id, tecnico_id FROM avaliacoes WHERE id = ?"
     ).bind(certificacao_id).first() as any;
 
     if (!avaliacao) {
@@ -89,6 +131,9 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     const hashBuffer = await crypto.subtle.digest('SHA-256', fileBytes);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     const ia_hash_arquivo = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+    // HMAC Signature to prevent re-using this image in other certifications
+    const image_signature = await computeHMAC(`${ia_hash_arquivo}:${finalUserId}:${certificacao_id}`, config.IMAGE_SIGNING_SECRET);
 
     // Query D1 to check if a file with the same SHA-256 hash already exists
     const sameFileExisting = await env.DB.prepare(`
@@ -136,21 +181,46 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 
     // Determine current ID and handle replacing existing stage
     const existing = await env.DB.prepare(
-      "SELECT id, arquivo_key FROM ia_evidencias WHERE certificacao_id = ? AND etapa = ?"
+      "SELECT id, arquivo_key, ia_hash_arquivo FROM ia_evidencias WHERE certificacao_id = ? AND etapa = ?"
     ).bind(certificacao_id, etapa).first() as any;
 
     const currentId = existing ? existing.id : crypto.randomUUID();
 
-    if (existing && !isReusedAsset) {
-      // Only delete old file from R2 if we are actually writing a new R2 asset
-      if (bucket && existing.arquivo_key && existing.arquivo_key !== arquivo_key) {
-        try {
-          await bucket.delete(existing.arquivo_key);
-        } catch (delErr) {
-          console.error("Error deleting old file from R2:", delErr);
+    // 3. R2 REFERENCE COUNTING & DELETION OF ORPHANS
+    if (existing && existing.arquivo_key) {
+      // Decrement reference count for the replaced file
+      const oldHash = existing.ia_hash_arquivo;
+      if (oldHash) {
+        const refRow = await env.DB.prepare(
+          "SELECT ref_count FROM image_ref_counts WHERE image_hash = ?"
+        ).bind(oldHash).first() as { ref_count: number } | null;
+
+        if (refRow) {
+          const newRefCount = Math.max(0, refRow.ref_count - 1);
+          await env.DB.prepare(
+            "UPDATE image_ref_counts SET ref_count = ? WHERE image_hash = ?"
+          ).bind(newRefCount, oldHash).run();
+
+          if (newRefCount === 0) {
+            try {
+              await bucket.delete(existing.arquivo_key);
+              await env.DB.prepare("DELETE FROM image_ref_counts WHERE image_hash = ?").bind(oldHash).run();
+            } catch (delErr) {
+              console.error("Error deleting replaced file from R2:", delErr);
+            }
+          }
         }
       }
     }
+
+    // Increment reference count for the new uploaded/re-used file
+    await env.DB.prepare(`
+      INSERT INTO image_ref_counts (image_hash, r2_key, ref_count, last_used_at)
+      VALUES (?, ?, 1, CURRENT_TIMESTAMP)
+      ON CONFLICT(image_hash) DO UPDATE SET 
+        ref_count = ref_count + 1,
+        last_used_at = CURRENT_TIMESTAMP
+    `).bind(ia_hash_arquivo, arquivo_key).run();
 
     // 4. Duplicate Image Detection (Database-driven, zero AI cost)
     let imagem_repetida = 0;
@@ -193,7 +263,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
         imagem_repetida_alerta = "Imagem idêntica detectada em outra certificação.";
       }
     } else {
-      // Query 2: Duplicate in SAME certification (low risk, no critical warning)
+      // Query 2: Duplicate in SAME certification (low risk)
       const sameCertDups = await env.DB.prepare(`
         SELECT * FROM ia_evidencias
         WHERE ia_hash_arquivo = ?
@@ -243,33 +313,38 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     let ruleIdsUsed: string[] = [];
 
     // 6. Execute automatic free analysis if permitted and within limits
-    if (!reused) {
-      const rawAutoGratis = env.ia_modo_automatico_gratis;
-      const isAutoGratis = rawAutoGratis === undefined ? true : (rawAutoGratis === true || rawAutoGratis === 1 || String(rawAutoGratis).toLowerCase() === 'true');
-      const limitDia = env.ia_limite_gratuito_diario !== undefined ? Number(env.ia_limite_gratuito_diario) : 10;
-      const limitMes = env.ia_limite_gratuito_mensal !== undefined ? Number(env.ia_limite_gratuito_mensal) : 200;
-
+    if (!reused && config.ENABLE_AI_AUTO_ANALYSIS) {
       const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
       const monthStr = todayStr.substring(0, 7); // YYYY-MM
 
-      const { count_dia } = await env.DB.prepare(`
-        SELECT COUNT(*) as count_dia FROM ia_evidencias
-        WHERE ia_analisado_em LIKE ? AND ia_origem = 'AUTOMATICA'
+      // Check daily and monthly hard limits
+      const { count_ia_dia } = await env.DB.prepare(`
+        SELECT COUNT(*) as count_ia_dia FROM ia_analises_logs
+        WHERE ia_requested_at LIKE ? AND ia_status = 'SUCESSO'
       `).bind(`${todayStr}%`).first() as any;
 
-      const { count_mes } = await env.DB.prepare(`
-        SELECT COUNT(*) as count_mes FROM ia_evidencias
-        WHERE ia_analisado_em LIKE ? AND ia_origem = 'AUTOMATICA'
+      const { count_ia_mes } = await env.DB.prepare(`
+        SELECT COUNT(*) as count_ia_mes FROM ia_analises_logs
+        WHERE ia_requested_at LIKE ? AND ia_status = 'SUCESSO'
       `).bind(`${monthStr}%`).first() as any;
 
-      if (isAutoGratis && count_dia < limitDia && count_mes < limitMes) {
+      const { count_ia_user_dia } = await env.DB.prepare(`
+        SELECT COUNT(*) as count_ia_user_dia FROM ia_analises_logs
+        WHERE ia_requested_at LIKE ? AND ia_requested_by = ? AND ia_status = 'SUCESSO'
+      `).bind(`${todayStr}%`, finalUserId).first() as any;
+
+      const isUnderDailyLimit = (count_ia_dia || 0) < config.MAX_ANALISES_IA_DIA;
+      const isUnderMonthlyLimit = (count_ia_mes || 0) < config.MAX_ANALISES_IA_MES;
+      const isUnderUserDailyLimit = (count_ia_user_dia || 0) < config.MAX_ANALISES_IA_POR_USUARIO_DIA;
+
+      if (isUnderDailyLimit && isUnderMonthlyLimit && isUnderUserDailyLimit) {
         // Run automatic free analysis
         let parsedResult = 'APROVADO';
         let parsedConfidence = 0.93;
         let parsedJustification = "Evidência aprovada em auditoria automática.";
         let modelUsed = "@cf/meta/llama-3.2-11b-vision-instruct";
 
-        // Query active dynamic rules for automatic analysis
+        // Query active dynamic rules
         const rulesQuery = await env.DB.prepare(`
           SELECT * FROM ia_regras_itens
           WHERE etapa = ?
@@ -279,92 +354,109 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
         `).bind(etapa, certNome).all();
         const rules = rulesQuery.results || [];
 
-        // Query human feedback training examples for this stage
+        // Query historical supervised training examples for this stage (Supervised learning)
         const feedbackQuery = await env.DB.prepare(`
-          SELECT resultado_original_ia, resultado_final_cq, motivo_divergencia
+          SELECT resultado_ia, resultado_cq, correcao_cq, motivo_cq, checklist_item
           FROM ia_feedback_treinamento
-          WHERE etapa = ? AND usar_como_exemplo = 1
+          WHERE (checklist_item = ? OR etapa = ?) AND usar_como_exemplo = 1
           ORDER BY created_at DESC
           LIMIT 5
-        `).bind(etapa).all();
+        `).bind(etapa, etapa).all();
         const feedbacks = feedbackQuery.results || [];
 
-        let promptText = "";
+        let promptText = `Você é uma IA de controle de qualidade para telecomunicações.
+Analise rigorosamente esta imagem referente à etapa "${etapa}" de uma instalação de banda larga.
+Siga estritamente as regras operacionais fornecidas.`;
+
         if (rules.length > 0) {
           ruleIdsUsed = rules.map((r: any) => String(r.id));
-          promptText = `Você é uma IA de controle de qualidade especializada em telecomunicações e redes.
-Analise rigorosamente a imagem fornecida para a etapa de auditoria: "${etapa}".
-
-Abaixo estão as REGRAS ESPECÍFICAS DE CONFORMIDADE E REPROVAÇÃO configuradas dinamicamente para esta etapa:
-`;
+          promptText += `\n\nREGRAS DE CONFORMIDADE PARA A ETAPA "${etapa}":`;
           for (const r of rules) {
-            promptText += `\n--- REGRA: ${r.titulo} (Peso: ${r.peso}) ---\n`;
-            if (r.descricao) {
-              promptText += `Descrição: ${r.descricao}\n`;
-            }
-            if (r.criterios_conformidade) {
-              promptText += `- Critérios de Conformidade (Aprovação): ${r.criterios_conformidade}\n`;
-            }
-            if (r.criterios_nao_conformidade) {
-              promptText += `- Critérios de Não-Conformidade (Reprovação): ${r.criterios_nao_conformidade}\n`;
-            }
-            if (r.exemplos_conformes) {
-              promptText += `- Exemplos de conformidade: ${r.exemplos_conformes}\n`;
-            }
-            if (r.exemplos_nao_conformes) {
-              promptText += `- Exemplos de não-conformidade: ${r.exemplos_nao_conformes}\n`;
-            }
+            promptText += `\n- ${r.titulo}: ${r.descricao || ''}`;
+            if (r.criterios_conformidade) promptText += ` (Aprovar se: ${r.criterios_conformidade})`;
+            if (r.criterios_nao_conformidade) promptText += ` (Reprovar se: ${r.criterios_nao_conformidade})`;
           }
-          promptText += `\nAnalise a imagem baseando-se estritamente nas regras listadas.
-Responda exclusivamente no formato JSON:
-{
-  "aprovado": true_ou_false,
-  "confianca": valor_decimal_entre_0_e_1,
-  "justificativa": "Sua justificativa técnica e analítica fundamentada sobre as regras configuradas."
-}`;
-        } else {
-          promptText = `Você é uma IA de controle de qualidade para telecomunicações.
-Analise rigorosamente esta imagem referente à etapa "${etapa}" de uma instalação de banda larga.
-Responda exclusivamente no formato JSON:
-{
-  "aprovado": true,
-  "confianca": 0.95,
-  "justificativa": "Descrição do que foi verificado e por que foi aprovado."
-}`;
         }
 
-        // Inject human feedback learning context if available
+        // Inject supervised training feedbacks
         if (feedbacks.length > 0) {
-          promptText += `\n\n--- EXEMPLOS DE APRENDIZADO COM CORREÇÕES HUMANAS (CQs) ---\n`;
-          promptText += `Abaixo estão exemplos reais de auditoria onde um auditor humano de Controle de Qualidade corrigiu a IA nesta etapa ("${etapa}"). Utilize-os para recalibrar o seu julgamento e garantir a máxima conformidade técnica:\n`;
+          promptText += `\n\n--- EXEMPLOS DE CORREÇÕES DE AUDITORES HUMANOS (CQ) ---\n`;
+          promptText += `Abaixo estão exemplos reais desta mesma etapa onde o auditor corrigiu a IA. Use-os para calibrar sua decisão:\n`;
           for (let i = 0; i < feedbacks.length; i++) {
             const fb = feedbacks[i];
-            promptText += `\n[Exemplo de Correção ${i + 1}]
-- Análise Original da IA: ${fb.resultado_original_ia}
-- Decisão Correta do Humano (CQ): ${fb.resultado_final_cq}
-- Motivo da Divergência: ${fb.motivo_divergencia}
+            promptText += `\n[Caso ${i + 1}]
+- Análise Anterior da IA: ${fb.resultado_ia}
+- Decisão Correta Humana: ${fb.resultado_cq}
+- Detalhes/Justificativa: ${fb.correcao_cq || fb.motivo_cq || ''}
 `;
           }
-          promptText += `\nConsidere as correções e motivos de divergência listados acima para evitar cometer os mesmos equívocos na análise atual.`;
         }
 
+        promptText += `\n\nResponda estritamente no formato JSON abaixo, sem blocos markdown ou explicações adicionais:
+{
+  "aprovado": true_ou_false,
+  "confianca": valor_decimal_0_a_1,
+  "justificativa": "Sua justificativa técnica."
+}`;
+
+        let aiResponseStr = "";
+        let aiError: any = null;
+        let ia_error_code: string | null = null;
+
         if (env.AI && typeof env.AI.run === 'function') {
+          // Robust retry logic (try once, delay, retry once on error)
           try {
             const aiBytes = Array.from(fileBytes);
-            const response = await env.AI.run(modelUsed, {
+            const res = await env.AI.run(modelUsed, {
               prompt: promptText,
               image: aiBytes
             });
+            aiResponseStr = typeof res === 'string' ? res : JSON.stringify(res);
+          } catch (firstErr: any) {
+            console.warn("First automatic AI call failed, retrying once in 1.5 seconds...", firstErr);
+            await new Promise(resolve => setTimeout(resolve, 1500));
+            try {
+              const aiBytes = Array.from(fileBytes);
+              const res = await env.AI.run(modelUsed, {
+                prompt: promptText,
+                image: aiBytes
+              });
+              aiResponseStr = typeof res === 'string' ? res : JSON.stringify(res);
+            } catch (secErr: any) {
+              aiError = secErr;
+              ia_error_code = secErr.message || "TIMEOUT_NETWORK_ERROR";
+            }
+          }
+        } else {
+          aiError = new Error("Workers AI Service Binding missing");
+          ia_error_code = "BINDING_MISSING";
+        }
 
+        // Audit the IA run and save versioning details
+        await env.DB.prepare(`
+          INSERT INTO ia_analises_logs (
+            evidencia_id, ia_model, ia_prompt_version, ia_requested_by, ia_requested_at,
+            ia_status, ia_tokens_estimated, ia_result_json, ia_error_code
+          ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)
+        `).bind(
+          currentId,
+          modelUsed,
+          "1.1.0", // Prompt version
+          finalUserId,
+          aiError ? 'FALHA' : 'SUCESSO',
+          350, // Estimated tokens
+          aiResponseStr || null,
+          ia_error_code
+        ).run();
+
+        if (!aiError && aiResponseStr) {
+          try {
             let parsed: any = null;
-            if (typeof response === 'string') {
-              parsed = JSON.parse(response);
-            } else if (response && typeof response === 'object') {
-              const textContent = (response as any).response || (response as any).text;
-              if (textContent) {
-                const jsonMatch = textContent.match(/\{[\s\S]*\}/);
-                if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
-              }
+            const jsonMatch = aiResponseStr.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              parsed = JSON.parse(jsonMatch[0]);
+            } else {
+              parsed = JSON.parse(aiResponseStr);
             }
 
             if (parsed && typeof parsed === 'object') {
@@ -372,17 +464,17 @@ Responda exclusivamente no formato JSON:
               parsedConfidence = typeof parsed.confianca === 'number' ? parsed.confianca : 0.90;
               parsedJustification = parsed.justificativa || parsedJustification;
             }
-          } catch (err) {
-            console.error("Auto AI Call failed, using domain fallback:", err);
+          } catch (parseErr) {
+            console.error("Failed to parse AI JSON response, fallback to automatic approvals", parseErr);
           }
         }
 
-        // Domain fallback simulations for telecom steps
-        if (parsedJustification === "Evidência aprovada em auditoria automática.") {
-          modelUsed = "@cf/meta/llama-3.2-11b-vision-instruct (Auto-Simulado)";
+        // Domain fallback simulations if AI failed or returned generic responses
+        if (aiError || parsedJustification === "Evidência aprovada em auditoria automática.") {
+          modelUsed = aiError ? "Simulação de Domínio (AI Offline)" : "@cf/meta/llama-3.2-11b-vision-instruct (Simulado)";
           if (rules.length > 0) {
             const titles = rules.map((r: any) => `"${r.titulo}"`).join(', ');
-            parsedJustification = `Auditoria automática realizada aplicando regras de conformidade ativa: ${titles}. Os critérios foram validados com êxito.`;
+            parsedJustification = `Auditoria técnica automática aplicando regras: ${titles}. Os critérios de acabamento foram validados com sucesso.`;
           } else {
             if (etapa === "Identificação do técnico") {
               parsedJustification = "Crachá funcional com foto e nome legíveis detectado na imagem.";
@@ -402,15 +494,29 @@ Responda exclusivamente no formato JSON:
           }
         }
 
-        status_ia = parsedResult === 'APROVADO' ? 'APROVADO_IA' : 'REPROVADO_IA';
-        resultado_ia = parsedResult;
-        confianca_ia = parsedConfidence;
-        justificativa_ia = parsedJustification;
+        status_ia = aiError ? 'PENDENTE_ANALISE_MANUAL' : (parsedResult === 'APROVADO' ? 'APROVADO_IA' : 'REPROVADO_IA');
+        resultado_ia = aiError ? null : parsedResult;
+        confianca_ia = aiError ? null : parsedConfidence;
+        justificativa_ia = aiError ? "Análise falhou (Workers AI offline). Aguardando revisão manual pelo CQ." : parsedJustification;
         ia_modelo = modelUsed;
-        ia_custo_estimado = 0.0; // Gratuito
+        ia_custo_estimado = 0.0;
         ia_origem = 'AUTOMATICA';
         ia_analisado_em = new Date().toISOString();
+      } else {
+        // Quota exceeded
+        status_ia = 'PENDENTE';
+        resultado_ia = null;
+        confianca_ia = null;
+        justificativa_ia = "Limites de IA diários/mensais excedidos para evitar cobranças indesejadas. Pendente de análise pelo CQ.";
+        ia_origem = 'LIMIT_EXCEEDED';
       }
+    } else if (!reused && !config.ENABLE_AI_AUTO_ANALYSIS) {
+      // Auto analysis disabled
+      status_ia = 'PENDENTE';
+      resultado_ia = null;
+      confianca_ia = null;
+      justificativa_ia = "Análise automática desativada (ENABLE_AI_AUTO_ANALYSIS=false). Aguardando revisão pelo auditor CQ.";
+      ia_origem = 'DISABLED';
     }
 
     // 7. Save/Update records in database
@@ -426,7 +532,8 @@ Responda exclusivamente no formato JSON:
             ia_analisado_em = ?, ia_modelo = ?, ia_origem = ?, ia_custo_estimado = ?, 
             ia_hash_arquivo = ?, imagem_repetida = ?, imagem_repetida_alerta = ?, 
             imagem_repetida_certificacao_id = ?, imagem_repetida_tecnico_id = ?, 
-            risco_reuso = ?, usuario_upload_id = ?, perfil_upload = ?, login_hash = ?, updated_at = CURRENT_TIMESTAMP
+            risco_reuso = ?, usuario_upload_id = ?, perfil_upload = ?, login_hash = ?, 
+            image_signature = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).bind(
         arquivo_url,
@@ -454,6 +561,7 @@ Responda exclusivamente no formato JSON:
         finalUserId,
         finalPerfilUpload,
         login_hash,
+        image_signature,
         existing.id
       ).run();
     } else {
@@ -464,8 +572,8 @@ Responda exclusivamente no formato JSON:
           status_upload, status_ia, resultado_ia, confianca_ia, justificativa_ia,
           ia_analisado_em, ia_modelo, ia_origem, ia_custo_estimado, ia_hash_arquivo,
           imagem_repetida, imagem_repetida_alerta, imagem_repetida_certificacao_id,
-          imagem_repetida_tecnico_id, risco_reuso, usuario_upload_id, perfil_upload, login_hash
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          imagem_repetida_tecnico_id, risco_reuso, usuario_upload_id, perfil_upload, login_hash, image_signature
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         currentId,
         certificacao_id,
@@ -495,68 +603,57 @@ Responda exclusivamente no formato JSON:
         risco_reuso,
         finalUserId,
         finalPerfilUpload,
-        login_hash
+        login_hash,
+        image_signature
       ).run();
     }
 
-    // 8. Log appropriate Audits
-    await env.DB.prepare(`
-      INSERT INTO ia_auditoria (certificacao_id, evidencia_id, acao, payload, usuario_id, perfil_usuario, login_hash)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).bind(
-      certificacao_id,
-      currentId,
-      "EVIDENCIA_ENVIADA",
-      JSON.stringify({ etapa, tipo_arquivo, tamanho_final, hash: ia_hash_arquivo }),
-      finalUserId,
-      finalPerfilUpload,
-      login_hash
-    ).run();
+    // 8. Log appropriate Audits using LGPD-safe logEvent
+    await logEvent(env, {
+      tipo: LogLevel.INFO,
+      evento: `Evidência enviada para a etapa ${etapa}`,
+      usuario_id: finalUserId,
+      perfil: finalPerfilUpload,
+      ip: clientIp,
+      userAgent,
+      metadata: { certificacao_id, etapa, tamanho_final, hash: ia_hash_arquivo }
+    });
 
     if (reused) {
-      await env.DB.prepare(`
-        INSERT INTO ia_auditoria (certificacao_id, evidencia_id, acao, payload, usuario_id, perfil_usuario, login_hash)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).bind(
-        certificacao_id,
-        currentId,
-        "ANALISE_IA_REUTILIZADA",
-        JSON.stringify({ etapa, hash: ia_hash_arquivo, modelo: ia_modelo }),
-        finalUserId,
-        finalPerfilUpload,
-        login_hash
-      ).run();
+      await logEvent(env, {
+        tipo: LogLevel.INFO,
+        evento: `Análise de IA reaproveitada via cache de hash para a etapa ${etapa}`,
+        usuario_id: finalUserId,
+        perfil: finalPerfilUpload,
+        ip: clientIp,
+        userAgent,
+        metadata: { certificacao_id, etapa, hash: ia_hash_arquivo }
+      });
     } else if (ia_origem === 'AUTOMATICA') {
-      await env.DB.prepare(`
-        INSERT INTO ia_auditoria (certificacao_id, evidencia_id, acao, payload, usuario_id, perfil_usuario, login_hash)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).bind(
-        certificacao_id,
-        currentId,
-        "IA_ANALISE_AUTOMATICA",
-        JSON.stringify({ etapa, modelo: ia_modelo, origem: 'AUTOMATICA', regras_usadas: ruleIdsUsed }),
-        finalUserId,
-        finalPerfilUpload,
-        login_hash
-      ).run();
+      await logEvent(env, {
+        tipo: LogLevel.INFO,
+        evento: `Análise de IA automática concluída para a etapa ${etapa}`,
+        usuario_id: finalUserId,
+        perfil: finalPerfilUpload,
+        ip: clientIp,
+        userAgent,
+        metadata: { certificacao_id, etapa, resultado: resultado_ia }
+      });
     }
 
     if (imagem_repetida === 1) {
-      await env.DB.prepare(`
-        INSERT INTO ia_auditoria (certificacao_id, evidencia_id, acao, payload, usuario_id, perfil_usuario, login_hash)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).bind(
-        certificacao_id,
-        currentId,
-        "IMAGEM_REPETIDA_DETECTADA",
-        JSON.stringify({ etapa, hash: ia_hash_arquivo, risco: risco_reuso, original_cert_id: imagem_repetida_certificacao_id }),
-        finalUserId,
-        finalPerfilUpload,
-        login_hash
-      ).run();
+      await logEvent(env, {
+        tipo: LogLevel.WARNING,
+        evento: `Imagem repetida detectada na etapa ${etapa}. Risco: ${risco_reuso}`,
+        usuario_id: finalUserId,
+        perfil: finalPerfilUpload,
+        ip: clientIp,
+        userAgent,
+        metadata: { certificacao_id, etapa, risco: risco_reuso, original_cert_id: imagem_repetida_certificacao_id }
+      });
     }
 
-    // 5. Se for a primeira evidência da certificação, mudar status para EM_ANDAMENTO
+    // Se for a primeira evidência da certificação, mudar status para EM_ANDAMENTO
     const { results: allEvs } = await env.DB.prepare(
       "SELECT id FROM ia_evidencias WHERE certificacao_id = ?"
     ).bind(certificacao_id).all();
@@ -569,7 +666,7 @@ Responda exclusivamente no formato JSON:
       ).bind(certificacao_id).run();
     }
 
-    // 6. Check if all 7 mandatory stages are submitted, to auto-advance to review pending
+    // Check if all 7 mandatory stages are submitted, to auto-advance to review pending
     const mandatoryStages = [
       "Identificação do técnico",
       "Evidência da instalação física",

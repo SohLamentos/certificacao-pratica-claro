@@ -36,7 +36,7 @@ export const onRequestDelete: PagesFunction<Env> = async ({ request, params, env
       return jsonResponse({ success: false, error: "Não é possível excluir evidência que já possui decisão do CQ." }, 403);
     }
 
-    // 2. Remove file from R2 if applicable
+    // 2. Remove file from R2 if applicable using Reference Counting
     if (evidence.arquivo_key) {
       let bucket: any = null;
       if (env.EVIDENCIAS_BUCKET && typeof env.EVIDENCIAS_BUCKET.delete === 'function') {
@@ -45,7 +45,35 @@ export const onRequestDelete: PagesFunction<Env> = async ({ request, params, env
 
       if (bucket) {
         try {
-          await bucket.delete(evidence.arquivo_key);
+          if (evidence.ia_hash_arquivo) {
+            // Retrieve current reference count
+            const refRow = await env.DB.prepare(
+              "SELECT ref_count FROM image_ref_counts WHERE image_hash = ?"
+            ).bind(evidence.ia_hash_arquivo).first() as { ref_count: number } | null;
+
+            if (refRow) {
+              const newRefCount = Math.max(0, refRow.ref_count - 1);
+              await env.DB.prepare(
+                "UPDATE image_ref_counts SET ref_count = ? WHERE image_hash = ?"
+              ).bind(newRefCount, evidence.ia_hash_arquivo).run();
+
+              if (newRefCount === 0) {
+                // No more references, safe to physically delete from R2
+                await bucket.delete(evidence.arquivo_key);
+                await env.DB.prepare(
+                  "DELETE FROM image_ref_counts WHERE image_hash = ?"
+                ).bind(evidence.ia_hash_arquivo).run();
+              } else {
+                console.info(`R2 File not deleted. Remaining references for hash ${evidence.ia_hash_arquivo}: ${newRefCount}`);
+              }
+            } else {
+              // Fallback: delete if no ref count track exists
+              await bucket.delete(evidence.arquivo_key);
+            }
+          } else {
+            // Fallback: delete directly if no hash exists on evidence record
+            await bucket.delete(evidence.arquivo_key);
+          }
         } catch (delErr) {
           console.error("Error deleting file from R2:", delErr);
         }

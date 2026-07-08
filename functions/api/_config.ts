@@ -1,0 +1,54 @@
+import { Env } from './_db';
+
+export function getFeatureFlag(env: Env, flagName: keyof Env, defaultValue: boolean): boolean {
+  const val = env[flagName];
+  if (val === undefined || val === null) {
+    return defaultValue;
+  }
+  if (typeof val === 'boolean') {
+    return val;
+  }
+  const strVal = String(val).toLowerCase().trim();
+  return strVal === 'true' || strVal === '1';
+}
+
+export function getNumericEnv(env: Env, varName: keyof Env, defaultValue: number): number {
+  const val = env[varName];
+  if (val === undefined || val === null) {
+    return defaultValue;
+  }
+  const num = Number(val);
+  return isNaN(num) ? defaultValue : num;
+}
+
+export function getAppConfig(env: Env) {
+  return {
+    // 1. Feature Flags
+    ENABLE_WORKERS_AI: getFeatureFlag(env, 'ENABLE_WORKERS_AI', true),
+    ENABLE_AI_AUTO_ANALYSIS: getFeatureFlag(env, 'ENABLE_AI_AUTO_ANALYSIS', false), // DEFAULT TO FALSE FOR MINIMUM COST
+    ENABLE_AI_MANUAL_TRIGGER: getFeatureFlag(env, 'ENABLE_AI_MANUAL_TRIGGER', true),
+    ENABLE_CLOUDFLARE_QUEUES: getFeatureFlag(env, 'ENABLE_CLOUDFLARE_QUEUES', false),
+    ENABLE_DURABLE_OBJECTS: getFeatureFlag(env, 'ENABLE_DURABLE_OBJECTS', false),
+    ENABLE_REALTIME: getFeatureFlag(env, 'ENABLE_REALTIME', false), // DEFAULT TO FALSE FOR MINIMUM COST
+    ENABLE_KV_CACHE: getFeatureFlag(env, 'ENABLE_KV_CACHE', false),
+    ENABLE_EDGE_CACHE: getFeatureFlag(env, 'ENABLE_EDGE_CACHE', false),
+    ENABLE_OBSERVABILITY_BASIC: getFeatureFlag(env, 'ENABLE_OBSERVABILITY_BASIC', true),
+    ENABLE_OBSERVABILITY_ADVANCED: getFeatureFlag(env, 'ENABLE_OBSERVABILITY_ADVANCED', false),
+    ENABLE_KNOWLEDGE_BASE: getFeatureFlag(env, 'ENABLE_KNOWLEDGE_BASE', true),
+    ENABLE_AI_FEEDBACK: getFeatureFlag(env, 'ENABLE_AI_FEEDBACK', true),
+    ENABLE_AI_DASHBOARD: getFeatureFlag(env, 'ENABLE_AI_DASHBOARD', true),
+    ENABLE_COST_DASHBOARD: getFeatureFlag(env, 'ENABLE_COST_DASHBOARD', true),
+    ENABLE_CONFIDENCE_SCORE: getFeatureFlag(env, 'ENABLE_CONFIDENCE_SCORE', true),
+
+    // Limits
+    MAX_ANALISES_IA_DIA: getNumericEnv(env, 'MAX_ANALISES_IA_DIA', 50),
+    MAX_ANALISES_IA_MES: getNumericEnv(env, 'MAX_ANALISES_IA_MES', 1000),
+    MAX_ANALISES_IA_POR_USUARIO_DIA: getNumericEnv(env, 'MAX_ANALISES_IA_POR_USUARIO_DIA', 10),
+
+    // Secrets
+    IMAGE_SIGNING_SECRET: env.IMAGE_SIGNING_SECRET || 'claro_cq_signing_secret_super_secure_key_2026',
+    LGPD_HASH_SALT: env.LGPD_HASH_SALT || 'claro_cq_lgpd_salt_2026',
+    RETENCAO_EVIDENCIAS_DIAS: getNumericEnv(env, 'RETENCAO_EVIDENCIAS_DIAS', 180),
+    RETENCAO_LOGS_DIAS: getNumericEnv(env, 'RETENCAO_LOGS_DIAS', 90),
+  };
+}
