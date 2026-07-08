@@ -19,7 +19,8 @@ import {
   LogOut,
   Menu,
   X,
-  RefreshCw
+  RefreshCw,
+  Cpu
 } from 'lucide-react';
 
 import Header from './components/Header';
@@ -33,6 +34,8 @@ import CQManagerView from './components/CQManagerView';
 import CQIdentificationGate from './components/CQIdentificationGate';
 import AnalistaIdentificationGate from './components/AnalistaIdentificationGate';
 import SettingsView from './components/SettingsView';
+import CertificacaoIAView from './components/CertificacaoIAView';
+import IARulesConfig from './components/IARulesConfig';
 import { Avaliacao, CertificacaoType, AvaliacaoStatus, ChecklistValue, CQ } from './types';
 import { getDynamicChecklistItems, calcularResultadoDinamico, setCachedCertificacoes, setCachedChecklistItems } from './data/dynamicChecklist';
 import { apiFetch } from './lib/api';
@@ -312,7 +315,11 @@ export default function App() {
   // Trigger form view for editing an existing evaluation
   const handleEditTrigger = (evaluation: Avaliacao) => {
     setEditingEvaluation(evaluation);
-    setCurrentView('nova');
+    if (evaluation.modoCertificacao === 'IA_ASSISTIDA') {
+      setCurrentView('ia_certificacao');
+    } else {
+      setCurrentView('nova');
+    }
   };
 
   // Trigger viewing details modal
@@ -604,6 +611,7 @@ export default function App() {
     { id: 'realizar', label: 'Realizar Certificação', icon: ClipboardCheck },
     { id: 'historico', label: 'Histórico Geral', icon: History },
     { id: 'cqs', label: 'Gerenciar Avaliadores', icon: Users },
+    { id: 'ia_config', label: 'Configuração da IA', icon: Cpu },
     { id: 'configuracoes', label: 'Configurações', icon: Settings },
   ];
 
@@ -771,7 +779,11 @@ export default function App() {
                   onDateChange={setSelectedDashboardDate}
                   onSelectEvaluation={(evalObj) => {
                     setEditingEvaluation(evalObj);
-                    setCurrentView('nova');
+                    if (evalObj.modoCertificacao === 'IA_ASSISTIDA') {
+                      setCurrentView('ia_certificacao');
+                    } else {
+                      setCurrentView('nova');
+                    }
                   }}
                   onOpenDetails={(evalObj) => {
                     setViewingEvaluation(evalObj);
@@ -836,7 +848,11 @@ export default function App() {
                     onSelectEvaluation={(evalObj) => {
                       setEditingEvaluation(evalObj);
                       setIsPerformingCert(true);
-                      setCurrentView('nova');
+                      if (evalObj.modoCertificacao === 'IA_ASSISTIDA') {
+                        setCurrentView('ia_certificacao');
+                      } else {
+                        setCurrentView('nova');
+                      }
                     }}
                     onOpenDetails={(evalObj) => {
                       setViewingEvaluation(evalObj);
@@ -868,6 +884,18 @@ export default function App() {
               </motion.div>
             )}
 
+            {currentView === 'ia_config' && currentProfile === 'analista' && (
+              <motion.div
+                key="ia_config"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+                transition={{ duration: 0.25 }}
+              >
+                <IARulesConfig />
+              </motion.div>
+            )}
+
             {currentView === 'nova' && (
               <motion.div
                 key="form"
@@ -893,6 +921,35 @@ export default function App() {
                   }}
                   initialData={editingEvaluation}
                   profile={isPerformingCert ? 'cq' : (currentProfile || undefined)}
+                />
+              </motion.div>
+            )}
+
+            {currentView === 'ia_certificacao' && editingEvaluation && (
+              <motion.div
+                key="ia-certificacao"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+                transition={{ duration: 0.25 }}
+              >
+                <CertificacaoIAView
+                  evaluation={editingEvaluation}
+                  onBack={() => {
+                    if (isPerformingCert) {
+                      setCurrentView('realizar');
+                      setIsPerformingCert(false);
+                    } else if (currentProfile === 'cq') {
+                      setCurrentView('home');
+                    } else if (editingEvaluation) {
+                      setCurrentView('historico');
+                    } else {
+                      setCurrentView('home');
+                    }
+                    setEditingEvaluation(null);
+                  }}
+                  onRefresh={refreshEvaluations}
+                  showToast={showToast}
                 />
               </motion.div>
             )}

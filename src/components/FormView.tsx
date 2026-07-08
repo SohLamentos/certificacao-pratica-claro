@@ -50,6 +50,7 @@ interface FormViewProps {
       tipoCertificacao: CertificacaoType;
       observacao?: string;
       notaTeorica?: number;
+      modoCertificacao?: 'TRADICIONAL' | 'IA_ASSISTIDA';
     }, 
     status: AvaliacaoStatus,
     checklistResponses: Record<number, ChecklistValue>,
@@ -87,6 +88,7 @@ export default function FormView({ onSave, onCancel, initialData, profile }: For
   const [data, setData] = useState('');
   const [tipoCertificacao, setTipoCertificacao] = useState<CertificacaoType | ''>('');
   const [observacao, setObservacao] = useState('');
+  const [modoCertificacao, setModoCertificacao] = useState<'TRADICIONAL' | 'IA_ASSISTIDA'>('TRADICIONAL');
 
   // Checklist state
   const [checklistResponses, setChecklistResponses] = useState<Record<number, ChecklistValue>>({});
@@ -235,6 +237,7 @@ export default function FormView({ onSave, onCancel, initialData, profile }: For
       setTipoCertificacao(initialData.tipoCertificacao);
       setChecklistResponses(initialData.checklistResponses || {});
       setObservacao(initialData.observacao || '');
+      setModoCertificacao((initialData as any).modoCertificacao || 'TRADICIONAL');
       
       if (initialData.notaTeorica !== undefined) {
         setNotaTeoricaInput(String(initialData.notaTeorica).replace('.', ','));
@@ -465,7 +468,8 @@ export default function FormView({ onSave, onCancel, initialData, profile }: For
       data,
       tipoCertificacao: tipoCertificacao as CertificacaoType,
       observacao: observacao.trim(),
-      notaTeorica: parsedTeorica !== null ? parsedTeorica : undefined
+      notaTeorica: parsedTeorica !== null ? parsedTeorica : undefined,
+      modoCertificacao: modoCertificacao
     }, status, checklistResponses);
   };
 
@@ -1246,7 +1250,77 @@ export default function FormView({ onSave, onCancel, initialData, profile }: For
                 </p>
               </div>
 
-              <div className="bg-white rounded-3xl border border-claro-border p-6 shadow-sm space-y-4">
+              <div className="bg-white rounded-3xl border border-claro-border p-6 shadow-sm space-y-5">
+                {/* Modo de Certificação */}
+                <div className="space-y-3">
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    Modo de Certificação
+                  </label>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {[
+                      { 
+                        id: 'TRADICIONAL', 
+                        label: 'Tradicional CQ', 
+                        desc: 'Fluxo atual com avaliação prática realizada pelo CQ.',
+                        icon: ClipboardList,
+                        isNew: false 
+                      },
+                      { 
+                        id: 'IA_ASSISTIDA', 
+                        label: 'Assistida por IA', 
+                        desc: 'Técnico envia evidências, IA analisa e CQ valida.',
+                        icon: Sparkles,
+                        isNew: true 
+                      }
+                    ].map((m) => {
+                      const Icon = m.icon;
+                      const isSelected = modoCertificacao === m.id;
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => setModoCertificacao(m.id as any)}
+                          className={`flex items-start p-4 rounded-2xl border text-left transition-all duration-150 cursor-pointer select-none gap-4 ${
+                            isSelected
+                              ? 'border-claro-red bg-red-50/40 ring-2 ring-red-500/10'
+                              : 'border-slate-200 hover:bg-slate-50 hover:border-slate-300 bg-white'
+                          }`}
+                        >
+                          <div className={`p-2.5 rounded-xl flex-shrink-0 ${isSelected ? 'bg-claro-red text-white' : 'bg-slate-100 text-slate-500'}`}>
+                            <Icon size={20} />
+                          </div>
+                          <div className="flex-grow space-y-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <strong className={`text-sm ${isSelected ? 'text-claro-red font-black' : 'text-slate-800'}`}>
+                                  {m.label}
+                                </strong>
+                                {m.isNew && (
+                                  <span className="text-[9px] font-black uppercase tracking-wider bg-claro-red text-white px-1.5 py-0.5 rounded-md inline-flex items-center gap-0.5 shadow-sm">
+                                    Novo
+                                  </span>
+                                )}
+                              </div>
+                              {isSelected && (
+                                <div className="w-4.5 h-4.5 bg-claro-red text-white rounded-full flex items-center justify-center shadow-sm flex-shrink-0">
+                                  <Check size={12} className="stroke-[3]" />
+                                </div>
+                              )}
+                            </div>
+                            <p className="text-xs text-slate-500 leading-normal font-medium">{m.desc}</p>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="border-t border-slate-100 my-4"></div>
+
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                  Tipo de Certificação
+                </label>
+
                 <div className="flex flex-col gap-3" id="field-tipoCertificacao">
                   {[
                     { id: 'GPON Veterano', label: 'GPON Veterano', desc: 'Checklist completo com 12 quesitos e controle crítico de conectores e acomodação.', icon: Wifi },

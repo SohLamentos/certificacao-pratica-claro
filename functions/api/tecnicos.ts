@@ -4,7 +4,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   try {
     await initDb(env.DB);
     const { results } = await env.DB.prepare(
-      "SELECT DISTINCT nome as nomeTecnico, matricula, empresa, cidade_base as cidadeBase FROM tecnicos ORDER BY nome ASC"
+      "SELECT id, nome as nomeTecnico, matricula, empresa, cidade_base as cidadeBase FROM tecnicos ORDER BY nome ASC"
     ).all();
     return jsonResponse(results);
   } catch (error) {

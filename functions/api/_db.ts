@@ -1,31 +1,20 @@
 export interface Env {
   DB: D1Database;
   RealtimeHub: any;
+  EVIDENCIAS_BUCKET?: any;
+  BUCKET?: any;
+  R2?: any;
+  AI?: any;
+  MAX_ANALISES_IA_DIA?: string | number;
+  MAX_ANALISES_IA_MES?: string | number;
+  ia_modo_automatico_gratis?: string | number | boolean;
+  ia_exigir_confirmacao_quando_pago?: string | number | boolean;
+  ia_limite_gratuito_diario?: string | number;
+  ia_limite_gratuito_mensal?: string | number;
 }
 
 async function checkAndMigrateSchema(db: D1Database) {
-  let shouldDrop = false;
-  try {
-    const info = await db.prepare("PRAGMA table_info(certificacoes)").all();
-    if (info && info.results && info.results.length > 0) {
-      const idCol = info.results.find((col: any) => col.name === 'id');
-      if (idCol && (idCol.type === 'TEXT' || idCol.type === 'text')) {
-        shouldDrop = true;
-      }
-    }
-  } catch (e) {
-    // Table might not exist yet
-  }
-
-  if (shouldDrop) {
-    await db.prepare("DROP TABLE IF EXISTS respostas").run();
-    await db.prepare("DROP TABLE IF EXISTS avaliacoes").run();
-    await db.prepare("DROP TABLE IF EXISTS itens").run();
-    await db.prepare("DROP TABLE IF EXISTS grupos").run();
-    await db.prepare("DROP TABLE IF EXISTS certificacoes").run();
-    await db.prepare("DROP TABLE IF EXISTS avaliadores").run();
-    await db.prepare("DROP TABLE IF EXISTS tecnicos").run();
-  }
+  // Automatic drop logic removed to avoid data loss on schema updates.
 }
 
 export async function initCertificacoes(db: D1Database) {
@@ -163,8 +152,152 @@ export async function initDb(db: D1Database) {
       observacao TEXT,
       nota_teorica REAL,
       nota_pratica REAL,
+      modo_certificacao TEXT DEFAULT 'TRADICIONAL',
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `).run();
+
+  // Migration: add modo_certificacao column if it doesn't exist
+  try {
+    await db.prepare("ALTER TABLE avaliacoes ADD COLUMN modo_certificacao TEXT DEFAULT 'TRADICIONAL'").run();
+  } catch (e) {
+    // Column already exists or table wasn't ready
+  }
+
+  // 6b. Initialize IA Evidencias
+  await db.prepare(`
+      CREATE TABLE IF NOT EXISTS ia_evidencias (
+      id TEXT PRIMARY KEY,
+      certificacao_id TEXT NOT NULL,
+      etapa TEXT NOT NULL,
+      tipo_arquivo TEXT NOT NULL,
+      arquivo_url TEXT NOT NULL,
+      arquivo_key TEXT NOT NULL,
+      mime_type TEXT,
+      tamanho_original INTEGER,
+      tamanho_final INTEGER,
+      largura INTEGER,
+      altura INTEGER,
+      status_upload TEXT DEFAULT 'ENVIADO',
+      status_ia TEXT DEFAULT 'PENDENTE',
+      resultado_ia TEXT,
+      confianca_ia REAL,
+      justificativa_ia TEXT,
+      decisao_cq TEXT,
+      observacao_cq TEXT,
+      ia_analisado_em TEXT,
+      ia_modelo TEXT,
+      ia_origem TEXT,
+      ia_custo_estimado REAL,
+      ia_hash_arquivo TEXT,
+      imagem_repetida INTEGER DEFAULT 0,
+      imagem_repetida_alerta TEXT,
+      imagem_repetida_certificacao_id TEXT,
+      imagem_repetida_tecnico_id TEXT,
+      risco_reuso TEXT DEFAULT 'BAIXO',
+      usuario_upload_id TEXT,
+      perfil_upload TEXT,
+      login_hash TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `).run();
+
+  // Migrations for ia_evidencias table to add new columns if they do not exist
+  try {
+    await db.prepare("ALTER TABLE ia_evidencias ADD COLUMN ia_analisado_em TEXT").run();
+  } catch (e) {}
+  try {
+    await db.prepare("ALTER TABLE ia_evidencias ADD COLUMN ia_modelo TEXT").run();
+  } catch (e) {}
+  try {
+    await db.prepare("ALTER TABLE ia_evidencias ADD COLUMN ia_origem TEXT").run();
+  } catch (e) {}
+  try {
+    await db.prepare("ALTER TABLE ia_evidencias ADD COLUMN ia_custo_estimado REAL").run();
+  } catch (e) {}
+  try {
+    await db.prepare("ALTER TABLE ia_evidencias ADD COLUMN ia_hash_arquivo TEXT").run();
+  } catch (e) {}
+  try {
+    await db.prepare("ALTER TABLE ia_evidencias ADD COLUMN imagem_repetida INTEGER DEFAULT 0").run();
+  } catch (e) {}
+  try {
+    await db.prepare("ALTER TABLE ia_evidencias ADD COLUMN imagem_repetida_alerta TEXT").run();
+  } catch (e) {}
+  try {
+    await db.prepare("ALTER TABLE ia_evidencias ADD COLUMN imagem_repetida_certificacao_id TEXT").run();
+  } catch (e) {}
+  try {
+    await db.prepare("ALTER TABLE ia_evidencias ADD COLUMN imagem_repetida_tecnico_id TEXT").run();
+  } catch (e) {}
+  try {
+    await db.prepare("ALTER TABLE ia_evidencias ADD COLUMN risco_reuso TEXT DEFAULT 'BAIXO'").run();
+  } catch (e) {}
+  try {
+    await db.prepare("ALTER TABLE ia_evidencias ADD COLUMN usuario_upload_id TEXT").run();
+  } catch (e) {}
+  try {
+    await db.prepare("ALTER TABLE ia_evidencias ADD COLUMN perfil_upload TEXT").run();
+  } catch (e) {}
+  try {
+    await db.prepare("ALTER TABLE ia_evidencias ADD COLUMN login_hash TEXT").run();
+  } catch (e) {}
+
+  // 6c. Initialize IA Auditoria
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS ia_auditoria (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      certificacao_id INTEGER NOT NULL,
+      evidencia_id TEXT,
+      acao TEXT,
+      payload TEXT,
+      usuario_id TEXT,
+      perfil_usuario TEXT,
+      login_hash TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `).run();
+
+  // Migrations for ia_auditoria to add new columns if they do not exist
+  try {
+    await db.prepare("ALTER TABLE ia_auditoria ADD COLUMN perfil_usuario TEXT").run();
+  } catch (e) {}
+  try {
+    await db.prepare("ALTER TABLE ia_auditoria ADD COLUMN login_hash TEXT").run();
+  } catch (e) {}
+
+  // 6d. Initialize IA Dynamic Rules table
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS ia_regras_itens (
+      id TEXT PRIMARY KEY,
+      tipo_certificacao TEXT,
+      etapa TEXT NOT NULL,
+      titulo TEXT NOT NULL,
+      descricao TEXT,
+      criterios_conformidade TEXT,
+      criterios_nao_conformidade TEXT,
+      exemplos_conformes TEXT,
+      exemplos_nao_conformes TEXT,
+      peso INTEGER DEFAULT 1,
+      ativo INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `).run();
+
+  // 6e. Initialize IA Human Feedback Training table
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS ia_feedback_treinamento (
+      id TEXT PRIMARY KEY,
+      evidencia_id TEXT NOT NULL,
+      etapa TEXT NOT NULL,
+      resultado_original_ia TEXT NOT NULL,
+      resultado_final_cq TEXT NOT NULL,
+      motivo_divergencia TEXT NOT NULL,
+      usar_como_exemplo INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
   `).run();
 
@@ -177,6 +310,29 @@ export async function initDb(db: D1Database) {
       resposta TEXT NOT NULL
     )
   `).run();
+
+  // 7b. Initialize LGPD & Privacy Config
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS ia_lgpd_config (
+      chave TEXT PRIMARY KEY,
+      valor TEXT NOT NULL
+    )
+  `).run();
+
+  // Seed default LGPD values if empty
+  const lgpdCountRes = await db.prepare("SELECT COUNT(*) as count FROM ia_lgpd_config").first();
+  const lgpdCount = (lgpdCountRes as any)?.count || 0;
+  if (lgpdCount === 0) {
+    const defaultConfigs = [
+      { chave: 'lgpd_retencao_dias', valor: '90' },
+      { chave: 'lgpd_provedor_ia', valor: 'workers_ai' },
+      { chave: 'lgpd_minimizacao_dados', valor: '1' },
+      { chave: 'lgpd_criptografia_armazenamento', valor: '1' }
+    ];
+    for (const cfg of defaultConfigs) {
+      await db.prepare("INSERT INTO ia_lgpd_config (chave, valor) VALUES (?, ?)").bind(cfg.chave, cfg.valor).run();
+    }
+  }
 
   // 8. Create Indexes
   await db.prepare("CREATE INDEX IF NOT EXISTS idx_avaliacoes_data ON avaliacoes(data)").run();

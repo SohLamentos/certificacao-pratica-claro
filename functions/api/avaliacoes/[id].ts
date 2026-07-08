@@ -55,7 +55,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         `UPDATE avaliacoes SET 
           tecnico_id = ?, nome_tecnico = ?, matricula = ?, empresa = ?, cidade_base = ?, 
           avaliador_id = ?, nome_cq = ?, data = ?, certificacao_id = ?, status = ?, 
-          resultado = ?, observacao = ?, nota_teorica = ?, nota_pratica = ?, 
+          resultado = ?, observacao = ?, nota_teorica = ?, nota_pratica = ?, modo_certificacao = ?, 
           updated_at = CURRENT_TIMESTAMP 
         WHERE id = ?`
       ).bind(
@@ -73,6 +73,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         data.observacao || '',
         data.notaTeorica !== undefined && data.notaTeorica !== null ? Number(data.notaTeorica) : null,
         notaPrat,
+        data.modoCertificacao || 'TRADICIONAL',
         id
       ).run();
 
@@ -134,6 +135,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         observacao: updatedRow.observacao || '',
         notaTeorica: updatedRow.nota_teorica !== null ? Number(updatedRow.nota_teorica) : undefined,
         notaPratica: updatedRow.nota_pratica !== null ? Number(updatedRow.nota_pratica) : undefined,
+        modoCertificacao: updatedRow.modo_certificacao || 'TRADICIONAL',
         createdAt: updatedRow.created_at,
         updatedAt: updatedRow.updated_at
       };

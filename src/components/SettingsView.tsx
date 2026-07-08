@@ -4,7 +4,7 @@ import {
   Award, ClipboardList, AlertTriangle, Database, Plus, Trash2, 
   Edit2, Download, Upload, X, ChevronRight, Save, Check,
   Cpu, Wifi, Tv, Layers, Smartphone, Globe, Info, Play, CheckSquare, ListTodo, Cable, HardDrive, HelpCircle,
-  AlertCircle, FileSpreadsheet
+  AlertCircle, FileSpreadsheet, Search, UserX, Calendar, Sliders, History
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { CertificacaoType, PerfilPermitido, DynamicCertificacao, DynamicChecklistItem, ChecklistValue } from '../types';
@@ -22,7 +22,7 @@ interface SettingsViewProps {
   onSwitchProfile: () => void;
 }
 
-type ActiveTab = 'profiles' | 'certifications' | 'items' | 'critical' | 'actions';
+type ActiveTab = 'profiles' | 'certifications' | 'items' | 'critical' | 'privacy' | 'actions';
 
 // Color palette presets for certifications
 const COLOR_PRESETS = [
@@ -92,6 +92,173 @@ export default function SettingsView({ onBack, onSwitchProfile }: SettingsViewPr
   const [selectedCertFilter, setSelectedCertFilter] = useState<string>('');
   const [selectedGroupFilter, setSelectedGroupFilter] = useState<string>('todos');
 
+  // LGPD & Privacy by Design Compliance States
+  const [lgpdConfigs, setLgpdConfigs] = useState<Record<string, string>>({
+    lgpd_retencao_dias: '90',
+    lgpd_provedor_ia: 'workers_ai',
+    lgpd_minimizacao_dados: '1',
+    lgpd_criptografia_armazenamento: '1'
+  });
+  const [lgpdAuditLogs, setLgpdAuditLogs] = useState<any[]>([]);
+  const [isLgpdLoading, setIsLgpdLoading] = useState(false);
+  const [allTecnicos, setAllTecnicos] = useState<any[]>([]);
+  const [searchTecText, setSearchTecText] = useState('');
+  const [isPurging, setIsPurging] = useState(false);
+
+  // Fetch LGPD Data
+  const fetchLgpdData = async () => {
+    setIsLgpdLoading(true);
+    try {
+      const res = await fetch('/api/ia/lgpd');
+      const data = await res.json() as any;
+      if (data.success) {
+        setLgpdConfigs(data.configs);
+        setLgpdAuditLogs(data.auditLogs);
+      }
+    } catch (err) {
+      console.error("Error fetching LGPD data:", err);
+    } finally {
+      setIsLgpdLoading(false);
+    }
+  };
+
+  // Fetch all technicians for search
+  const fetchTecnicosForLgpd = async () => {
+    try {
+      const res = await fetch('/api/tecnicos');
+      const data = await res.json() as any[];
+      if (Array.isArray(data)) {
+        setAllTecnicos(data);
+      }
+    } catch (err) {
+      console.error("Error fetching technicians:", err);
+    }
+  };
+
+  // Effect to load data when privacy tab is active
+  useEffect(() => {
+    if (activeTab === 'privacy') {
+      fetchLgpdData();
+      fetchTecnicosForLgpd();
+    }
+  }, [activeTab]);
+
+  // Handle save single config
+  const handleSaveLgpdConfig = async (chave: string, valor: string) => {
+    try {
+      const res = await fetch('/api/ia/lgpd', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'save_config',
+          chave,
+          valor,
+          usuario_executor: 'CQ_ADMIN'
+        })
+      });
+      const data = await res.json() as any;
+      if (data.success) {
+        setLgpdConfigs(prev => ({ ...prev, [chave]: valor }));
+        triggerSuccess(`Configuração de privacidade salva!`);
+        fetchLgpdData(); // Reload audit logs
+      } else {
+        triggerError(data.error || "Erro ao salvar configuração.");
+      }
+    } catch (err: any) {
+      triggerError(err.message || "Erro na rede.");
+    }
+  };
+
+  // Handle manual purge
+  const handleExecutePurge = async () => {
+    const dias = lgpdConfigs.lgpd_retencao_dias || '90';
+    if (!window.confirm(`ATENÇÃO: Deseja realmente executar a política de retenção de dados agora? Todos os registros de evidências e logs de auditoria com mais de ${dias} dias serão excluídos definitivamente de acordo com as regras de governança.`)) {
+      return;
+    }
+    
+    setIsPurging(true);
+    try {
+      const res = await fetch('/api/ia/lgpd', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'purge_retention',
+          dias: parseInt(dias, 10),
+          usuario_executor: 'CQ_ADMIN'
+        })
+      });
+      const data = await res.json() as any;
+      if (data.success) {
+        triggerSuccess(`Expurgo executado! Removidos: ${data.details.auditPurgeCount} logs e ${data.details.evidencePurgeCount} evidências.`);
+        fetchLgpdData(); // Refresh logs
+      } else {
+        triggerError(data.error || "Erro no expurgo.");
+      }
+    } catch (err: any) {
+      triggerError(err.message || "Erro de conexão.");
+    } finally {
+      setIsPurging(false);
+    }
+  };
+
+  // Handle Technician Deletion (Forgotten)
+  const handleForgetTechnician = async (tecnicoId: number, nome: string) => {
+    if (!window.confirm(`ATENÇÃO - DIREITO AO ESQUECIMENTO (LGPD Art. 18):\n\nEsta ação excluirá PERMANENTEMENTE o técnico "${nome}", todas as suas certificações, respostas de checklist e evidências vinculadas no banco de dados.\n\nEsta operação é IRREVERSÍVEL e necessária para conformidade com pedidos formais de exclusão de dados.\n\nDeseja confirmar a exclusão definitiva de todos os dados deste técnico?`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/ia/lgpd', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'forget_technician',
+          tecnicoId,
+          usuario_executor: 'CQ_ADMIN'
+        })
+      });
+      const data = await res.json() as any;
+      if (data.success) {
+        triggerSuccess(`Técnico permanentemente excluído em conformidade com o Artigo 18 da LGPD.`);
+        fetchTecnicosForLgpd(); // Refresh list
+        fetchLgpdData(); // Refresh audit logs
+      } else {
+        triggerError(data.error || "Erro ao executar exclusão.");
+      }
+    } catch (err: any) {
+      triggerError(err.message || "Erro de conexão.");
+    }
+  };
+
+  // Handle Technician Anonymization (Alternative right to be forgotten)
+  const handleAnonymizeTechnician = async (tecnicoId: number, nome: string) => {
+    if (!window.confirm(`DIREITO AO ESQUECIMENTO (Anonimização):\n\nEsta ação substituirá o nome do técnico "${nome}", matrícula, empresa e cidade-base por strings anonimizadas (ex: "Técnico Anonimizado").\n\nIsso permite preservar as métricas e notas estatísticas de auditorias agregadas, removendo qualquer possibilidade de identificação pessoal do técnico.\n\nDeseja confirmar a anonimização?`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/ia/lgpd', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'anonymize_technician',
+          tecnicoId,
+          usuario_executor: 'CQ_ADMIN'
+        })
+      });
+      const data = await res.json() as any;
+      if (data.success) {
+        triggerSuccess(`Os dados pessoais do técnico foram devidamente anonimizados de acordo com a LGPD.`);
+        fetchTecnicosForLgpd(); // Refresh list
+        fetchLgpdData(); // Refresh audit logs
+      } else {
+        triggerError(data.error || "Erro ao anonimizar técnico.");
+      }
+    } catch (err: any) {
+      triggerError(err.message || "Erro de conexão.");
+    }
+  };
+
   // Load state on mount
   useEffect(() => {
     const certs = getDynamicCertificacoes();
@@ -127,6 +294,11 @@ export default function SettingsView({ onBack, onSwitchProfile }: SettingsViewPr
   const triggerSuccess = (msg: string) => {
     setSuccessMessage(msg);
     setTimeout(() => setSuccessMessage(null), 3000);
+  };
+
+  const triggerError = (msg: string) => {
+    setErrorMessage(msg);
+    setTimeout(() => setErrorMessage(null), 4000);
   };
 
   // Profile update handler
@@ -583,6 +755,7 @@ export default function SettingsView({ onBack, onSwitchProfile }: SettingsViewPr
     { id: 'certifications', label: 'Certificações', icon: Award, desc: 'Cadastro de certificações' },
     { id: 'items', label: 'Itens da Certificação', icon: ClipboardList, desc: 'Perguntas e grupos do checklist' },
     { id: 'critical', label: 'Itens Críticos', icon: AlertTriangle, desc: 'Itens que reprovam automaticamente' },
+    { id: 'privacy', label: 'Privacidade & LGPD', icon: Shield, desc: 'Conformidade, Expurgo e Esquecimento' },
     { id: 'actions', label: 'Ações do Sistema', icon: Database, desc: 'Backup, importações e limpeza' }
   ];
 
@@ -1101,6 +1274,294 @@ export default function SettingsView({ onBack, onSwitchProfile }: SettingsViewPr
                   </table>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* TAB: PRIVACIDADE & LGPD */}
+          {activeTab === 'privacy' && (
+            <div className="space-y-6 animate-fade-in flex flex-col h-full text-slate-700">
+              
+              {/* Top Banner Alert */}
+              <div className="bg-emerald-50/70 border border-emerald-150 p-4 rounded-2xl flex items-start gap-3">
+                <Shield size={20} className="text-emerald-600 mt-0.5 shrink-0" />
+                <div className="text-xs">
+                  <h4 className="font-extrabold text-emerald-800 uppercase tracking-wider mb-0.5">Módulo de Privacidade em Conformidade com a LGPD e Privacy by Design</h4>
+                  <p className="text-emerald-700 leading-relaxed font-medium">
+                    Todas as ações críticas neste sistema dependem de revisão humana. Dados pessoais são armazenados de forma isolada, e a inteligência artificial analisa apenas evidências técnicas anonimizadas. Todos os eventos de acesso e processamento geram registros na trilha de auditoria digital inviolável do sistema.
+                  </p>
+                </div>
+              </div>
+
+              {/* Bento Grid Configurations */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                
+                {/* 1. Minimização de Dados & Forward-Compatibility */}
+                <div className="lg:col-span-6 bg-slate-50 border border-slate-200 rounded-2xl p-4 flex flex-col justify-between">
+                  <div>
+                    <h3 className="text-xs font-black uppercase tracking-wider text-slate-500 mb-3 flex items-center gap-1.5">
+                      <Sliders size={14} className="text-claro-red" />
+                      Minimização & Compatibilidade de IA
+                    </h3>
+                    
+                    <div className="space-y-4">
+                      {/* Toggle Minimizacao */}
+                      <div className="p-3 border border-slate-150 bg-white rounded-xl flex items-center justify-between gap-3">
+                        <div className="text-[10px]">
+                          <span className="font-extrabold text-slate-700 block mb-0.5">Minimização Automática de Dados (PII Stripping)</span>
+                          <p className="text-slate-400 font-medium leading-tight text-left">Mascara CPF, RG, emails e telefones antes de enviá-los à IA, evitando o compartilhamento desnecessário.</p>
+                        </div>
+                        <select
+                          value={lgpdConfigs.lgpd_minimizacao_dados || '1'}
+                          onChange={(e) => handleSaveLgpdConfig('lgpd_minimizacao_dados', e.target.value)}
+                          className="text-xs border border-slate-200 rounded-lg p-1.5 font-bold text-slate-700 focus:outline-none bg-slate-50 cursor-pointer"
+                        >
+                          <option value="1">Ativado (Recomendado)</option>
+                          <option value="0">Desativado</option>
+                        </select>
+                      </div>
+
+                      {/* IA Provider selector (Forward compatibility) */}
+                      <div className="p-3 border border-slate-150 bg-white rounded-xl flex items-center justify-between gap-3">
+                        <div className="text-[10px]">
+                          <span className="font-extrabold text-slate-700 block mb-0.5">Provedor de Inteligência Artificial</span>
+                          <p className="text-slate-400 font-medium leading-tight text-left">Arquitetura modular de IA compatível com trocas de provedor e fallbacks locais ou na nuvem.</p>
+                        </div>
+                        <select
+                          value={lgpdConfigs.lgpd_provedor_ia || 'workers_ai'}
+                          onChange={(e) => handleSaveLgpdConfig('lgpd_provedor_ia', e.target.value)}
+                          className="text-xs border border-slate-200 rounded-lg p-1.5 font-bold text-slate-700 focus:outline-none bg-slate-50 cursor-pointer"
+                        >
+                          <option value="workers_ai">Cloudflare Workers AI (Llama)</option>
+                          <option value="google_gemini">Google Gemini 2.0 Flash</option>
+                          <option value="openai_fallback">OpenAI ChatGPT FALLBACK</option>
+                        </select>
+                      </div>
+
+                      {/* Criptografia info */}
+                      <div className="p-3 border border-slate-150 bg-white rounded-xl flex items-center justify-between gap-3">
+                        <div className="text-[10px]">
+                          <span className="font-extrabold text-slate-700 block mb-0.5">Criptografia em Repouso e Trânsito</span>
+                          <p className="text-slate-400 font-medium leading-tight text-left">Armazenamento local e em banco na nuvem operam sob criptografia AES-256 e SSL/TLS ativo.</p>
+                        </div>
+                        <span className="px-2.5 py-1 text-[9px] font-extrabold rounded-md uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-200">
+                          Ativo e Seguro
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Retenção Configuravel */}
+                <div className="lg:col-span-6 bg-slate-50 border border-slate-200 rounded-2xl p-4 flex flex-col justify-between">
+                  <div>
+                    <h3 className="text-xs font-black uppercase tracking-wider text-slate-500 mb-3 flex items-center gap-1.5">
+                      <Calendar size={14} className="text-slate-500" />
+                      Políticas de Retenção de Dados
+                    </h3>
+
+                    <div className="space-y-4">
+                      {/* Period Config */}
+                      <div className="p-3 border border-slate-150 bg-white rounded-xl flex items-center justify-between gap-3">
+                        <div className="text-[10px]">
+                          <span className="font-extrabold text-slate-700 block mb-0.5">Prazo de Retenção Legal</span>
+                          <p className="text-slate-400 font-medium leading-tight text-left">Tempo em que os logs de auditoria e arquivos de evidência técnica permanecem armazenados.</p>
+                        </div>
+                        <select
+                          value={lgpdConfigs.lgpd_retencao_dias || '90'}
+                          onChange={(e) => handleSaveLgpdConfig('lgpd_retencao_dias', e.target.value)}
+                          className="text-xs border border-slate-200 rounded-lg p-1.5 font-bold text-slate-700 focus:outline-none bg-slate-50 cursor-pointer"
+                        >
+                          <option value="30">30 Dias</option>
+                          <option value="90">90 Dias (Padrão)</option>
+                          <option value="180">180 Dias</option>
+                          <option value="365">1 Ano</option>
+                          <option value="9999">Indefinido</option>
+                        </select>
+                      </div>
+
+                      {/* Manual Purge trigger */}
+                      <div className="p-4 border border-dashed border-slate-200 bg-white rounded-xl space-y-3">
+                        <div className="text-[10px]">
+                          <span className="font-extrabold text-slate-700 block mb-1">Executar Purga Manual de Governança</span>
+                          <p className="text-slate-400 font-medium leading-normal text-left">Apaga permanentemente todos os logs e arquivos de evidência que ultrapassaram o período limite configurado de {lgpdConfigs.lgpd_retencao_dias || '90'} dias.</p>
+                        </div>
+                        <button
+                          onClick={handleExecutePurge}
+                          disabled={isPurging}
+                          className="py-1.5 px-3 bg-slate-800 hover:bg-slate-900 disabled:bg-slate-300 text-white font-extrabold rounded-lg text-xs transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs select-none"
+                        >
+                          <RefreshCw size={12} className={isPurging ? "animate-spin" : ""} />
+                          <span>{isPurging ? "Expurgando..." : "Executar Expurgamento Agora"}</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* 3. Direito ao Esquecimento - Artigo 18 LGPD */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+                <div>
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                    <UserX size={14} className="text-rose-600" />
+                    Gerenciamento do Direito ao Esquecimento (Art. 18 LGPD)
+                  </h3>
+                  <p className="text-[10px] text-slate-400 font-medium leading-tight mt-0.5 text-left">
+                    Permita aos técnicos e colaboradores do ecossistema a exclusão definitiva ou anonimização de dados a partir de requisições formais de privacidade.
+                  </p>
+                </div>
+
+                {/* Search Bar */}
+                <div className="flex gap-2 max-w-md">
+                  <div className="relative flex-grow">
+                    <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Pesquisar técnico por nome ou matrícula..."
+                      value={searchTecText}
+                      onChange={(e) => setSearchTecText(e.target.value)}
+                      className="w-full text-xs pl-9 pr-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-400 font-medium bg-white"
+                    />
+                  </div>
+                </div>
+
+                {/* Technician List Table */}
+                <div className="border border-slate-150 bg-white rounded-xl overflow-hidden max-h-[220px] overflow-y-auto">
+                  <table className="w-full text-left border-collapse text-[11px]">
+                    <thead className="bg-slate-50 text-[9px] font-extrabold uppercase tracking-wider text-slate-400 border-b border-slate-150 sticky top-0 z-10">
+                      <tr>
+                        <th className="px-4 py-2">Técnico</th>
+                        <th className="px-4 py-2">Matrícula</th>
+                        <th className="px-4 py-2">Empresa</th>
+                        <th className="px-4 py-2">Cidade/Base</th>
+                        <th className="px-4 py-2 text-right">Direito de Esquecimento</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {allTecnicos.filter(t => 
+                        !searchTecText ||
+                        t.nomeTecnico.toLowerCase().includes(searchTecText.toLowerCase()) ||
+                        t.matricula.toLowerCase().includes(searchTecText.toLowerCase())
+                      ).length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="px-4 py-6 text-center text-slate-400 font-semibold italic">
+                            Nenhum técnico encontrado para o termo especificado.
+                          </td>
+                        </tr>
+                      ) : (
+                        allTecnicos
+                          .filter(t => 
+                            !searchTecText ||
+                            t.nomeTecnico.toLowerCase().includes(searchTecText.toLowerCase()) ||
+                            t.matricula.toLowerCase().includes(searchTecText.toLowerCase())
+                          )
+                          .map((tec) => (
+                            <tr key={tec.id || tec.matricula} className="hover:bg-slate-50/50">
+                              <td className="px-4 py-2.5 font-bold text-slate-800">{tec.nomeTecnico}</td>
+                              <td className="px-4 py-2.5 font-mono text-[10px] text-slate-500">{tec.matricula}</td>
+                              <td className="px-4 py-2.5 text-slate-500 font-semibold">{tec.empresa}</td>
+                              <td className="px-4 py-2.5 text-slate-500 font-semibold">{tec.cidadeBase}</td>
+                              <td className="px-4 py-2.5 text-right space-x-1.5">
+                                <button
+                                  onClick={() => handleAnonymizeTechnician(tec.id, tec.nomeTecnico)}
+                                  disabled={tec.nomeTecnico.includes('Anonimizado')}
+                                  className="py-1 px-2.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-800 disabled:opacity-50 font-extrabold rounded-md text-[10px] transition-colors cursor-pointer select-none"
+                                >
+                                  Anonimizar (Art. 18)
+                                </button>
+                                <button
+                                  onClick={() => handleForgetTechnician(tec.id, tec.nomeTecnico)}
+                                  className="py-1 px-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-700 font-extrabold rounded-md text-[10px] transition-colors cursor-pointer select-none border border-rose-100"
+                                >
+                                  Excluir Geral
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* 4. Auditoria Trail (Art. 37 LGPD) */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3 font-sans">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-xs font-black uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                      <History size={14} className="text-slate-500" />
+                      Trilha de Auditoria Geral (Audit Trail - Art. 37 LGPD)
+                    </h3>
+                    <p className="text-[10px] text-slate-400 font-medium leading-tight mt-0.5 text-left">
+                      Registro contínuo e imutável de todas as ações de conformidade, decisões do CQ, análises da IA e solicitações do direito ao esquecimento.
+                    </p>
+                  </div>
+                  <button
+                    onClick={fetchLgpdData}
+                    className="p-1 border border-slate-200 hover:bg-slate-100 rounded-md transition-colors"
+                    title="Atualizar Audit Trail"
+                  >
+                    <RefreshCw size={12} className={isLgpdLoading ? "animate-spin" : ""} />
+                  </button>
+                </div>
+
+                {/* Audit Trail List Table */}
+                <div className="border border-slate-150 bg-white rounded-xl overflow-hidden max-h-[300px] overflow-y-auto">
+                  <table className="w-full text-left border-collapse text-[10px]">
+                    <thead className="bg-slate-50 text-[9px] font-extrabold uppercase tracking-wider text-slate-400 border-b border-slate-150 sticky top-0 z-10">
+                      <tr>
+                        <th className="px-4 py-2 w-28">Data/Hora</th>
+                        <th className="px-4 py-2 w-44">Ação / Evento</th>
+                        <th className="px-4 py-2 w-20">Executor ID</th>
+                        <th className="px-4 py-2">Detalhes Técnicos / Payload</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-medium text-slate-600">
+                      {isLgpdLoading && lgpdAuditLogs.length === 0 ? (
+                        <tr>
+                          <td colSpan={4} className="px-4 py-6 text-center text-slate-400 font-semibold">
+                            <RefreshCw size={14} className="animate-spin inline mr-1" />
+                            Carregando trilha de auditoria digital...
+                          </td>
+                        </tr>
+                      ) : lgpdAuditLogs.length === 0 ? (
+                        <tr>
+                          <td colSpan={4} className="px-4 py-6 text-center text-slate-400 font-semibold italic animate-pulse">
+                            Nenhum registro de auditoria gravado no banco de dados.
+                          </td>
+                        </tr>
+                      ) : (
+                        lgpdAuditLogs.map((log) => (
+                          <tr key={log.id} className="hover:bg-slate-50/50">
+                            <td className="px-4 py-2 font-mono text-[9px] text-slate-400">
+                              {new Date(log.created_at || '').toLocaleString('pt-BR')}
+                            </td>
+                            <td className="px-4 py-2">
+                              <span className={`px-2 py-0.5 rounded-md font-extrabold uppercase text-[8px] border ${
+                                log.acao?.includes('DIREITO') || log.acao?.includes('ESQUECIMENTO') 
+                                  ? 'bg-rose-50 text-rose-700 border-rose-150'
+                                  : log.acao?.includes('EXPURGO')
+                                  ? 'bg-amber-50 text-amber-700 border-amber-150'
+                                  : log.acao?.includes('CONFIG')
+                                  ? 'bg-indigo-50 text-indigo-700 border-indigo-150'
+                                  : 'bg-slate-100 text-slate-700 border-slate-200'
+                              }`}>
+                                {log.acao}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2 font-mono text-slate-500">{log.usuario_id || 'SYSTEM'}</td>
+                            <td className="px-4 py-2 font-mono text-[9px] text-slate-400 max-w-sm truncate" title={log.payload}>
+                              {log.payload}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
             </div>
           )}
 

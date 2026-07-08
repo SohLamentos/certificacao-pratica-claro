@@ -4,7 +4,7 @@
 
 export type CertificacaoType = string;
 
-export type AvaliacaoStatus = 'AGENDADA' | 'EM_ANDAMENTO' | 'APROVADA' | 'REPROVADA' | 'EM ANDAMENTO' | 'FINALIZADA' | 'Rascunho' | 'Concluída';
+export type AvaliacaoStatus = 'AGENDADA' | 'EM_ANDAMENTO' | 'APROVADA' | 'REPROVADA' | 'EM ANDAMENTO' | 'FINALIZADA' | 'Rascunho' | 'Concluída' | 'AGUARDANDO_REVISAO_CQ';
 
 export type ChecklistValue = 'Fez' | 'NaoFez' | 'NA';
 
@@ -56,6 +56,7 @@ export interface Avaliacao {
   data: string;
   tipoCertificacao: CertificacaoType;
   status: AvaliacaoStatus;
+  modoCertificacao?: 'TRADICIONAL' | 'IA_ASSISTIDA';
   checklistResponses: Record<number, ChecklistValue>; // Map of itemId -> response value
   resultado?: AvaliacaoResult; // Final results when status is 'Concluída' or previewed
   observacao?: string; // Optional notes/observation

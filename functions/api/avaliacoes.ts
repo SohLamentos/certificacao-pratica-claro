@@ -88,6 +88,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
         observacao: row.observacao || '',
         notaTeorica: row.nota_teorica !== null ? Number(row.nota_teorica) : undefined,
         notaPratica: row.nota_pratica !== null ? Number(row.nota_pratica) : undefined,
+        modoCertificacao: row.modo_certificacao || 'TRADICIONAL',
         createdAt: row.created_at,
         updatedAt: row.updated_at
       };
@@ -152,8 +153,8 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       `INSERT INTO avaliacoes (
         tecnico_id, nome_tecnico, matricula, empresa, cidade_base, 
         avaliador_id, nome_cq, data, certificacao_id, status, resultado, 
-        observacao, nota_teorica, nota_pratica, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+        observacao, nota_teorica, nota_pratica, modo_certificacao, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
     ).bind(
       tecId,
       data.nomeTecnico,
@@ -168,7 +169,8 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       resultadoStr,
       data.observacao || '',
       data.notaTeorica !== undefined && data.notaTeorica !== null ? Number(data.notaTeorica) : null,
-      notaPrat
+      notaPrat,
+      data.modoCertificacao || 'TRADICIONAL'
     ).run();
 
     const evalId = result.meta?.last_row_id || (result as any).lastRowId;
