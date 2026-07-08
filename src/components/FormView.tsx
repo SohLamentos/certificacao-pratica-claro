@@ -52,7 +52,8 @@ interface FormViewProps {
       notaTeorica?: number;
     }, 
     status: AvaliacaoStatus,
-    checklistResponses: Record<number, ChecklistValue>
+    checklistResponses: Record<number, ChecklistValue>,
+    shouldRedirect?: boolean
   ) => void;
   onCancel: () => void;
   initialData: Avaliacao | null;
@@ -1401,6 +1402,20 @@ export default function FormView({ onSave, onCancel, initialData, profile }: For
                         if (parsed < 7) {
                           setActiveCqView('reprovadoTeorica');
                         } else {
+                          // Save immediately to SQLite database with EM_ANDAMENTO status so practice is unlocked and not left as AGENDADA.
+                          if (initialData) {
+                            onSave({
+                              nomeTecnico: nomeTecnico.trim(),
+                              matricula: matricula.trim().toUpperCase(),
+                              empresa: empresa.trim(),
+                              cidadeBase: cidadeBase.trim(),
+                              nomeCQ: nomeCQ.trim(),
+                              data,
+                              tipoCertificacao: tipoCertificacao as CertificacaoType,
+                              observacao: observacao.trim(),
+                              notaTeorica: parsed
+                            }, 'EM_ANDAMENTO', checklistResponses, false);
+                          }
                           setActiveCqView('checklist');
                         }
                       }}
@@ -1464,7 +1479,7 @@ export default function FormView({ onSave, onCancel, initialData, profile }: For
                           tipoCertificacao: tipoCertificacao as CertificacaoType,
                           observacao: observacao.trim(),
                           notaTeorica: parsed !== null ? parsed : undefined
-                        }, 'FINALIZADA', {});
+                        }, 'REPROVADA', {});
                       }}
                       className="w-full py-4.5 bg-claro-red hover:bg-red-700 active:bg-red-800 text-white font-black rounded-2xl text-base transition-all duration-150 shadow-md border-b-4 border-red-800 active:border-b-0 flex items-center justify-center space-x-2 cursor-pointer animate-pulse"
                       id="btn-finalize-theoretical-failure"
@@ -1928,7 +1943,7 @@ export default function FormView({ onSave, onCancel, initialData, profile }: For
 
                       <button
                         type="button"
-                        onClick={() => handleFinalSave(profile === 'cq' ? 'EM ANDAMENTO' : 'Rascunho')}
+                        onClick={() => handleFinalSave('EM_ANDAMENTO')}
                         className="flex-1 py-2 flex items-center justify-center space-x-1 border border-amber-300 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white font-extrabold rounded-xl text-xs transition-all shadow-sm cursor-pointer"
                       >
                         <FileText size={14} />
@@ -2117,7 +2132,7 @@ export default function FormView({ onSave, onCancel, initialData, profile }: For
                 {/* Botão principal (vermelho) */}
                 <button
                   type="button"
-                  onClick={() => handleFinalSave(profile === 'cq' ? 'FINALIZADA' : 'Concluída')}
+                  onClick={() => handleFinalSave('APROVADA')}
                   className="w-full py-3 bg-claro-red hover:bg-red-700 active:bg-red-800 text-white font-black rounded-xl text-xs transition-all duration-150 shadow-md flex items-center justify-center space-x-2 cursor-pointer"
                   id="btn-save-finalize"
                 >

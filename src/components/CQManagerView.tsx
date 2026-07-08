@@ -6,9 +6,10 @@ import { apiFetch } from '../lib/api';
 
 interface CQManagerViewProps {
   onBack: () => void;
+  evaluations: any[];
 }
 
-export default function CQManagerView({ onBack }: CQManagerViewProps) {
+export default function CQManagerView({ onBack, evaluations }: CQManagerViewProps) {
   const [cqs, setCqs] = useState<CQ[]>([]);
   const [isEditing, setIsEditing] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -20,7 +21,6 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
   const [status, setStatus] = useState<'Ativo' | 'Inativo'>('Ativo');
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  const [evaluations, setEvaluations] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -36,22 +36,10 @@ export default function CQManagerView({ onBack }: CQManagerViewProps) {
     }
   };
 
-  const fetchEvaluations = async () => {
-    try {
-      const res = await apiFetch('/api/avaliacoes');
-      if (res.ok) {
-        const data = await res.json();
-        setEvaluations(data);
-      }
-    } catch (e) {
-      console.error('Failed to fetch evaluations', e);
-    }
-  };
-
   useEffect(() => {
     const init = async () => {
       setIsLoading(true);
-      await Promise.all([fetchCQs(), fetchEvaluations()]);
+      await fetchCQs();
       setIsLoading(false);
     };
     init();

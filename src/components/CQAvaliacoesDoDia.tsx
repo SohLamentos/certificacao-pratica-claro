@@ -123,27 +123,26 @@ export default function CQAvaliacoesDoDia({
     }
 
     // Ready to save!
-    // If parsed < 7, the evaluation must be finalized automatically
+    // If parsed < 7, the evaluation must be failed immediately
     let updatedEval: Avaliacao;
     if (parsed < 7) {
-      // Finalize evaluation dynamically
+      // Finalize evaluation dynamically as REPROVADA
       const certItems = getDynamicChecklistItems().filter(i => i.certificacao === item.tipoCertificacao && i.ativo);
       const resultado = calcularResultadoDinamico(certItems, {}, parsed);
       
       updatedEval = {
         ...item,
         notaTeorica: parsed,
-        status: 'FINALIZADA',
+        status: 'REPROVADA',
         resultado,
         updatedAt: new Date().toISOString()
       };
     } else {
-      // Keep available for practice
+      // Set to EM_ANDAMENTO to liberate practice immediately
       updatedEval = {
         ...item,
         notaTeorica: parsed,
-        // If it was FINALIZADA because of previous < 7, change status back to AGENDADA so they can do practical
-        status: item.status === 'FINALIZADA' ? 'AGENDADA' : item.status,
+        status: 'EM_ANDAMENTO',
         resultado: undefined, // Clear failure result since they are now >= 7 and need practical
         updatedAt: new Date().toISOString()
       };
@@ -180,6 +179,15 @@ export default function CQAvaliacoesDoDia({
 
       if (!isDateMatch || !isCQMatch) return false;
 
+      // Only show AGENDADA or in-progress evaluations for CQ daily execution
+      const status = e.status as string;
+      const isEligible = status === 'AGENDADA' || 
+                         status === 'EM_AND_AMENTO' || 
+                         status === 'EM_ANDAMENTO' || 
+                         status === 'EM ANDAMENTO' || 
+                         status === 'Rascunho';
+      if (!isEligible) return false;
+
       // Perfil must match
       const evaluatorCQ = cqs.find(c => String(c.id) === String(e.avaliadorId) || c.nome === e.nomeCQ);
       const evaluatorProfile = evaluatorCQ ? (evaluatorCQ.perfil || 'CQ') : 'CQ';
@@ -200,19 +208,27 @@ export default function CQAvaliacoesDoDia({
           color: 'bg-blue-50 text-blue-700 border-blue-100',
           dot: 'bg-blue-500'
         };
-      case 'EM ANDAMENTO':
-      case 'Rascunho':
+      case 'EM_ANDAMENTO':
+      case 'EM ANDAMENTO' as any:
+      case 'Rascunho' as any:
         return {
           label: 'Andamento',
           color: 'bg-amber-50 text-amber-700 border-amber-100',
           dot: 'bg-amber-500'
         };
-      case 'FINALIZADA':
-      case 'Concluída':
+      case 'APROVADA':
+      case 'Concluída' as any:
+      case 'FINALIZADA' as any:
         return {
-          label: 'Finalizada',
+          label: 'Aprovada',
           color: 'bg-emerald-50 text-emerald-700 border-emerald-100',
           dot: 'bg-emerald-500'
+        };
+      case 'REPROVADA':
+        return {
+          label: 'Reprovada',
+          color: 'bg-red-50 text-claro-red border-red-100',
+          dot: 'bg-red-500'
         };
       default:
         return {
@@ -330,10 +346,10 @@ export default function CQAvaliacoesDoDia({
               {filtered.map((item) => {
                 const statusDetails = getStatusDisplay(item.status);
                 const TechIcon = getTechIcon(item.tipoCertificacao);
-                const isFinalized = item.status === 'FINALIZADA' || item.status === 'Concluída';
+                const isFinalized = item.status === 'FINALIZADA' || item.status === 'Concluída' || item.status === 'APROVADA' || item.status === 'REPROVADA';
                 const hasTeorica = item.notaTeorica !== undefined;
                 const isTeoricaReprovado = hasTeorica && item.notaTeorica! < 7;
-                const finalResult = isTeoricaReprovado ? 'REPROVADO' : (item.resultado?.resultado || 'APROVADO');
+                const finalResult = isTeoricaReprovado ? 'REPROVADO' : (item.status === 'REPROVADA' ? 'REPROVADO' : (item.resultado?.resultado || 'APROVADO'));
                 const formattedTeorica = hasTeorica ? String(item.notaTeorica).replace('.', ',') : null;
                 const formattedPratica = isTeoricaReprovado 
                   ? 'Não realizada' 
@@ -372,8 +388,8 @@ export default function CQAvaliacoesDoDia({
                     {/* Status vertical accent border */}
                     <div className={`w-1.5 shrink-0 ${
                       isFinalized
-                        ? (finalResult === 'APROVADO' ? 'bg-emerald-500' : 'bg-claro-red')
-                        : item.status === 'EM ANDAMENTO' || item.status === 'Rascunho'
+                        ? (finalResult === 'APROVADO' || item.status === 'APROVADA' ? 'bg-emerald-500' : 'bg-claro-red')
+                        : item.status === 'EM_AND_AMENTO' || item.status === 'EM_ANDAMENTO' || item.status === 'EM ANDAMENTO' || item.status === 'Rascunho'
                           ? 'bg-amber-500'
                           : 'bg-blue-500'
                     }`}></div>

@@ -25,25 +25,29 @@ export default function HomeView({ onNavigate, evaluations, onSelectProfile, onO
   // Compute dashboard statistics
   const total = evaluations.length;
   const agendadas = evaluations.filter(e => e.status === 'AGENDADA').length;
-  const emAndamento = evaluations.filter(e => e.status === 'EM ANDAMENTO').length;
-  const finalizadas = evaluations.filter(e => e.status === 'FINALIZADA' || e.status === 'Concluída').length;
+  const emAndamento = evaluations.filter(e => 
+    (e.status as string) === 'EM_AND_AMENTO' || 
+    e.status === 'EM_ANDAMENTO' || 
+    (e.status as string) === 'EM ANDAMENTO' || 
+    (e.status as string) === 'Rascunho'
+  ).length;
   
   const aprovadas = evaluations.filter(e => {
+    if (e.status === 'APROVADA') return true;
     const isCompleted = e.status === 'FINALIZADA' || e.status === 'Concluída';
     if (!isCompleted) return false;
-    if (e.tipoCertificacao === 'GPON Veterano' || e.tipoCertificacao === 'GPON Capacitação' || e.tipoCertificacao === 'HFC Capacitação') {
-      return e.resultado?.resultado === 'APROVADO';
-    }
-    return true; // Approved by default for other techs
+    // For legacy completed status, check result
+    const resultValue = e.resultado?.resultado;
+    if (resultValue === 'REPROVADO') return false;
+    return true; // Default to approved for legacy finished evaluations
   }).length;
 
   const reprovadas = evaluations.filter(e => {
+    if (e.status === 'REPROVADA') return true;
     const isCompleted = e.status === 'FINALIZADA' || e.status === 'Concluída';
     if (!isCompleted) return false;
-    if (e.tipoCertificacao === 'GPON Veterano' || e.tipoCertificacao === 'GPON Capacitação' || e.tipoCertificacao === 'HFC Capacitação') {
-      return e.resultado?.resultado === 'REPROVADO';
-    }
-    return false;
+    const resultValue = e.resultado?.resultado;
+    return resultValue === 'REPROVADO';
   }).length;
 
   const countByType = {
@@ -58,7 +62,7 @@ export default function HomeView({ onNavigate, evaluations, onSelectProfile, onO
     .slice(0, 5);
 
   // Helper for Status Badge styling
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = (status: string, resultado?: string) => {
     switch (status) {
       case 'AGENDADA':
         return (
@@ -66,17 +70,37 @@ export default function HomeView({ onNavigate, evaluations, onSelectProfile, onO
             Agendada
           </span>
         );
+      case 'EM_ANDAMENTO':
       case 'EM ANDAMENTO':
         return (
           <span className="text-[10px] font-black uppercase tracking-wider bg-amber-50 text-amber-700 px-2.5 py-1 rounded-full border border-amber-100 animate-pulse">
             Em andamento
           </span>
         );
-      case 'FINALIZADA':
-      case 'Concluída':
+      case 'APROVADA':
         return (
           <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-full border border-emerald-100">
-            Finalizada
+            Aprovada
+          </span>
+        );
+      case 'REPROVADA':
+        return (
+          <span className="text-[10px] font-black uppercase tracking-wider bg-red-50 text-claro-red px-2.5 py-1 rounded-full border border-red-100">
+            Reprovada
+          </span>
+        );
+      case 'FINALIZADA':
+      case 'Concluída':
+        if (resultado === 'REPROVADO') {
+          return (
+            <span className="text-[10px] font-black uppercase tracking-wider bg-red-50 text-claro-red px-2.5 py-1 rounded-full border border-red-100">
+              Reprovada
+            </span>
+          );
+        }
+        return (
+          <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-full border border-emerald-100">
+            Aprovada
           </span>
         );
       case 'Rascunho':
@@ -133,8 +157,8 @@ export default function HomeView({ onNavigate, evaluations, onSelectProfile, onO
           <span className="w-1.5 h-1.5 rounded-full bg-claro-red animate-pulse"></span>
         </div>
 
-        {/* 5-Column Responsive Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3.5">
+        {/* 4-Column Responsive Grid */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
           {/* Agendada */}
           <div className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-col justify-between shadow-xs relative overflow-hidden text-left min-w-0">
             <div className="absolute top-0 left-0 right-0 h-1 bg-sky-500"></div>
@@ -153,16 +177,6 @@ export default function HomeView({ onNavigate, evaluations, onSelectProfile, onO
               <Clock size={15} className="text-amber-500" />
             </div>
             <span className="text-2xl font-black text-slate-800 tracking-tight mt-2">{emAndamento}</span>
-          </div>
-
-          {/* Finalizadas */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-col justify-between shadow-xs relative overflow-hidden text-left min-w-0">
-            <div className="absolute top-0 left-0 right-0 h-1 bg-slate-600"></div>
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] text-slate-400 font-black uppercase tracking-wider">Finalizadas</span>
-              <ClipboardCheck size={15} className="text-slate-600" />
-            </div>
-            <span className="text-2xl font-black text-slate-800 tracking-tight mt-2">{finalizadas}</span>
           </div>
 
           {/* Aprovadas */}
@@ -321,7 +335,7 @@ export default function HomeView({ onNavigate, evaluations, onSelectProfile, onO
                         </span>
                       </td>
                       <td className="py-3.5 px-2 text-center">
-                        {getStatusBadge(item.status)}
+                        {getStatusBadge(item.status, item.resultado?.resultado)}
                       </td>
                       <td className="py-3.5 px-2 text-center">
                         <span className="text-xs font-semibold text-slate-500 font-mono">

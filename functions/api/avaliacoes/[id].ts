@@ -87,7 +87,58 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         }
       }
 
-      return jsonResponse({ success: true });
+      // Fetch the updated evaluation to return it
+      const updatedRow = await env.DB.prepare(`
+        SELECT a.*, c.nome as certificacao_nome
+        FROM avaliacoes a
+        LEFT JOIN certificacoes c ON a.certificacao_id = c.id
+        WHERE a.id = ?
+      `).bind(id).first() as any;
+
+      if (!updatedRow) {
+        return jsonResponse({ success: false, error: "Evaluation not found after update" }, 404);
+      }
+
+      // Fetch checklist responses
+      const { results: resps } = await env.DB.prepare(
+        "SELECT * FROM respostas WHERE avaliacao_id = ?"
+      ).bind(id).all();
+
+      const responsesObj: Record<number, string> = {};
+      (resps || []).forEach((r: any) => {
+        responsesObj[r.item_id] = r.resposta;
+      });
+
+      let resObj = null;
+      try {
+        if (updatedRow.resultado) {
+          resObj = JSON.parse(updatedRow.resultado);
+        }
+      } catch (e) {
+        console.error("Error parsing resultado for", updatedRow.id, e);
+      }
+
+      const mapped = {
+        id: String(updatedRow.id),
+        nomeTecnico: updatedRow.nome_tecnico,
+        matricula: updatedRow.matricula,
+        empresa: updatedRow.empresa,
+        cidadeBase: updatedRow.cidade_base,
+        nomeCQ: updatedRow.nome_cq,
+        avaliadorId: updatedRow.avaliador_id ? String(updatedRow.avaliador_id) : undefined,
+        data: updatedRow.data,
+        tipoCertificacao: updatedRow.certificacao_nome || String(updatedRow.certificacao_id),
+        status: updatedRow.status,
+        checklistResponses: responsesObj,
+        resultado: resObj,
+        observacao: updatedRow.observacao || '',
+        notaTeorica: updatedRow.nota_teorica !== null ? Number(updatedRow.nota_teorica) : undefined,
+        notaPratica: updatedRow.nota_pratica !== null ? Number(updatedRow.nota_pratica) : undefined,
+        createdAt: updatedRow.created_at,
+        updatedAt: updatedRow.updated_at
+      };
+
+      return jsonResponse({ success: true, evaluation: mapped });
     }
 
     if (request.method === 'DELETE') {

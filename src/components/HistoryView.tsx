@@ -64,7 +64,22 @@ export default function HistoryView({
       item.cidadeBase.toLowerCase().includes(searchTerm.toLowerCase());
 
     const matchesTech = selectedTechFilter === 'Todos' || item.tipoCertificacao === selectedTechFilter;
-    const matchesStatus = selectedStatusFilter === 'Todos' || item.status === selectedStatusFilter;
+    const matchesStatus = (() => {
+      if (selectedStatusFilter === 'Todos') return true;
+      if (selectedStatusFilter === 'AGENDADA') {
+        return item.status === 'AGENDADA';
+      }
+      if (selectedStatusFilter === 'EM_AND_AMENTO' || selectedStatusFilter === 'EM_ANDAMENTO') {
+        return (item.status as string) === 'EM_AND_AMENTO' || item.status === 'EM_ANDAMENTO' || item.status === 'EM ANDAMENTO' || item.status === 'Rascunho';
+      }
+      if (selectedStatusFilter === 'APROVADA') {
+        return item.status === 'APROVADA' || ((item.status === 'FINALIZADA' || item.status === 'Concluída') && item.resultado?.resultado !== 'REPROVADO');
+      }
+      if (selectedStatusFilter === 'REPROVADA') {
+        return item.status === 'REPROVADA' || ((item.status === 'FINALIZADA' || item.status === 'Concluída') && item.resultado?.resultado === 'REPROVADO');
+      }
+      return item.status === selectedStatusFilter;
+    })();
 
     return matchesSearch && matchesTech && matchesStatus;
   });
@@ -149,7 +164,7 @@ export default function HistoryView({
               <SlidersHorizontal size={11} /> Status:
             </span>
             <div className="flex flex-wrap gap-1">
-              {['Todos', 'Rascunho', 'Concluída'].map((status) => (
+              {['Todos', 'AGENDADA', 'EM_ANDAMENTO', 'APROVADA', 'REPROVADA'].map((status) => (
                 <button
                   key={status}
                   onClick={() => setSelectedStatusFilter(status)}
@@ -159,7 +174,11 @@ export default function HistoryView({
                       : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
                   }`}
                 >
-                  {status}
+                  {status === 'Todos' ? 'Todos' :
+                   status === 'AGENDADA' ? 'Agendada' :
+                   status === 'EM_AND_AMENTO' || status === 'EM_ANDAMENTO' ? 'Em Andamento' :
+                   status === 'APROVADA' ? 'Aprovada' :
+                   status === 'REPROVADA' ? 'Reprovada' : status}
                 </button>
               ))}
             </div>
@@ -183,10 +202,10 @@ export default function HistoryView({
                   ? Tv 
                   : (item.tipoCertificacao === 'GPON Capacitação' ? Cpu : Wifi);
 
-                const isFinalized = item.status === 'Concluída' || item.status === 'FINALIZADA';
+                const isFinalized = item.status === 'Concluída' || item.status === 'FINALIZADA' || item.status === 'APROVADA' || item.status === 'REPROVADA';
                 const hasTeorica = item.notaTeorica !== undefined;
                 const isTeoricaReprovado = hasTeorica && item.notaTeorica! < 7;
-                const finalResult = isTeoricaReprovado ? 'REPROVADO' : (item.resultado?.resultado || 'APROVADO');
+                const finalResult = isTeoricaReprovado ? 'REPROVADO' : (item.status === 'REPROVADA' ? 'REPROVADO' : (item.resultado?.resultado || 'APROVADO'));
                 const formattedTeorica = hasTeorica ? String(item.notaTeorica).replace('.', ',') : null;
                 const formattedPratica = isTeoricaReprovado 
                   ? 'Não realizada' 
@@ -212,8 +231,10 @@ export default function HistoryView({
                     {/* Status vertical accent border */}
                     <div className={`w-1.5 shrink-0 ${
                       isFinalized
-                        ? (finalResult === 'APROVADO' ? 'bg-emerald-500' : 'bg-claro-red')
-                        : 'bg-amber-500'
+                        ? (finalResult === 'APROVADO' || item.status === 'APROVADA' ? 'bg-emerald-500' : 'bg-claro-red')
+                        : (item.status as string) === 'EM_AND_AMENTO' || item.status === 'EM_ANDAMENTO' || item.status === 'EM ANDAMENTO' || item.status === 'Rascunho'
+                          ? 'bg-amber-500'
+                          : 'bg-blue-500'
                     }`}></div>
 
                     {/* Content container */}
@@ -265,10 +286,12 @@ export default function HistoryView({
                         {/* Status badge in top right */}
                         <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase border leading-none ${
                           isFinalized
-                            ? (finalResult === 'APROVADO' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-red-50 text-claro-red border-red-100')
-                            : 'bg-amber-50 text-amber-700 border-amber-100'
+                            ? (finalResult === 'APROVADO' || item.status === 'APROVADA' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-red-50 text-claro-red border-red-100')
+                            : (item.status as string) === 'EM_AND_AMENTO' || item.status === 'EM_ANDAMENTO' || item.status === 'EM ANDAMENTO' || item.status === 'Rascunho'
+                              ? 'bg-amber-50 text-amber-700 border-amber-100'
+                              : 'bg-blue-50 text-blue-700 border-blue-100'
                         }`}>
-                          {isFinalized ? 'FINALIZADA' : item.status}
+                          {(item.status as string) === 'EM_AND_AMENTO' || item.status === 'EM_ANDAMENTO' || item.status === 'EM ANDAMENTO' || item.status === 'Rascunho' ? 'EM ANDAMENTO' : item.status}
                         </span>
 
                         {/* Actions aligned to the right, clickable within parent */}

@@ -4,7 +4,7 @@
 
 export type CertificacaoType = string;
 
-export type AvaliacaoStatus = 'AGENDADA' | 'EM ANDAMENTO' | 'FINALIZADA' | 'Rascunho' | 'Concluída';
+export type AvaliacaoStatus = 'AGENDADA' | 'EM_ANDAMENTO' | 'APROVADA' | 'REPROVADA' | 'EM ANDAMENTO' | 'FINALIZADA' | 'Rascunho' | 'Concluída';
 
 export type ChecklistValue = 'Fez' | 'NaoFez' | 'NA';
 

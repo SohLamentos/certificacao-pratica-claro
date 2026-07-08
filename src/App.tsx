@@ -51,7 +51,7 @@ const SEED_DATA: Avaliacao[] = [
     nomeCQ: 'Pedro Henrique CQ',
     data: '2026-06-25',
     tipoCertificacao: 'GPON Veterano',
-    status: 'Concluída',
+    status: 'APROVADA',
     checklistResponses: {
       1: 'Fez',
       2: 'Fez',
@@ -86,7 +86,7 @@ const SEED_DATA: Avaliacao[] = [
     nomeCQ: 'Mariana Costa CQ',
     data: '2026-07-01',
     tipoCertificacao: 'GPON Capacitação',
-    status: 'Rascunho',
+    status: 'EM_ANDAMENTO',
     checklistResponses: {},
     createdAt: '2026-07-01T14:22:00.000Z',
     updatedAt: '2026-07-01T14:22:00.000Z'
@@ -100,7 +100,7 @@ const SEED_DATA: Avaliacao[] = [
     nomeCQ: 'Julio Cesar CQ',
     data: '2026-07-03',
     tipoCertificacao: 'HFC Capacitação',
-    status: 'Concluída',
+    status: 'APROVADA',
     checklistResponses: {},
     createdAt: '2026-07-03T09:00:00.000Z',
     updatedAt: '2026-07-03T09:12:00.000Z'
@@ -334,18 +334,22 @@ export default function App() {
       notaTeorica?: number;
     },
     status: AvaliacaoStatus,
-    checklistResponses: Record<number, ChecklistValue>
+    checklistResponses: Record<number, ChecklistValue>,
+    shouldRedirect: boolean = true
   ) => {
     const now = new Date().toISOString();
 
     // Compute results if status is finalized dynamically
     let resultado;
-    const isFinalized = status === 'FINALIZADA' || status === 'Concluída';
+    let finalStatus = status;
+    const isFinalized = status === 'FINALIZADA' || status === 'Concluída' || status === 'APROVADA' || status === 'REPROVADA';
     if (isFinalized) {
       const activeItems = getDynamicChecklistItems().filter(
         item => item.certificacao === formData.tipoCertificacao && item.ativo
       );
       resultado = calcularResultadoDinamico(activeItems, checklistResponses, formData.notaTeorica);
+      // Determine actual state: APROVADA or REPROVADA based on dynamic result
+      finalStatus = resultado.resultado === 'APROVADO' ? 'APROVADA' : 'REPROVADA';
     }
 
     setIsSaving(true);
@@ -355,7 +359,7 @@ export default function App() {
         const updatedRecord = {
           ...editingEvaluation,
           ...formData,
-          status,
+          status: finalStatus,
           checklistResponses,
           resultado,
           updatedAt: now
@@ -368,6 +372,13 @@ export default function App() {
         });
 
         if (res.ok) {
+          const result = await res.json() as any;
+          if (result.success && result.evaluation) {
+            setEvaluations(prev => prev.map(e => e.id === result.evaluation.id ? result.evaluation : e));
+            if (!shouldRedirect) {
+              setEditingEvaluation(result.evaluation);
+            }
+          }
           showToast(`Avaliação de ${formData.nomeTecnico} atualizada com sucesso!`, 'success');
         } else {
           showToast(`Erro ao atualizar avaliação de ${formData.nomeTecnico}.`, 'error');
@@ -377,7 +388,7 @@ export default function App() {
         const newRecord: Avaliacao = {
           id: 'eval-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
           ...formData,
-          status,
+          status: finalStatus,
           checklistResponses,
           resultado,
           createdAt: now,
@@ -391,7 +402,7 @@ export default function App() {
         });
 
         if (res.ok) {
-          showToast(`Avaliação de ${formData.nomeTecnico} salva como ${status === 'AGENDADA' ? 'AGENDADA' : status}!`, 'success');
+          showToast(`Avaliação de ${formData.nomeTecnico} salva como ${finalStatus === 'AGENDADA' ? 'AGENDADA' : finalStatus}!`, 'success');
         } else {
           showToast(`Erro ao criar nova avaliação de ${formData.nomeTecnico}.`, 'error');
         }
@@ -405,16 +416,18 @@ export default function App() {
       setIsSaving(false);
     }
 
-    setEditingEvaluation(null);
-    
-    // Automatically redirect back based on profile
-    if (isPerformingCert) {
-      setCurrentView('realizar');
-      setIsPerformingCert(false);
-    } else if (currentProfile === 'cq') {
-      setCurrentView('home');
-    } else {
-      setCurrentView('historico');
+    if (shouldRedirect) {
+      setEditingEvaluation(null);
+      
+      // Automatically redirect back based on profile
+      if (isPerformingCert) {
+        setCurrentView('realizar');
+        setIsPerformingCert(false);
+      } else if (currentProfile === 'cq') {
+        setCurrentView('home');
+      } else {
+        setCurrentView('historico');
+      }
     }
   };
 
@@ -454,7 +467,12 @@ export default function App() {
         body: JSON.stringify(updatedEval)
       });
       if (res.ok) {
-        if (updatedEval.status === 'FINALIZADA') {
+        const result = await res.json() as any;
+        if (result.success && result.evaluation) {
+          setEvaluations(prev => prev.map(e => e.id === result.evaluation.id ? result.evaluation : e));
+        }
+        const isCompleted = updatedEval.status === 'FINALIZADA' || updatedEval.status === 'APROVADA' || updatedEval.status === 'REPROVADA';
+        if (isCompleted) {
           showToast(`Avaliação de ${updatedEval.nomeTecnico} finalizada com sucesso!`, 'success');
         } else {
           showToast(`Nota teórica de ${updatedEval.nomeTecnico} salva com sucesso!`, 'success');
@@ -913,7 +931,7 @@ export default function App() {
                 exit={{ opacity: 0, y: -15 }}
                 transition={{ duration: 0.25 }}
               >
-                <CQManagerView onBack={handleGoHome} />
+                <CQManagerView onBack={handleGoHome} evaluations={evaluations} />
               </motion.div>
             )}
           </AnimatePresence>
