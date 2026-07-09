@@ -219,8 +219,17 @@ export default function App() {
     setIsMobileMenuOpen(false);
     setIsPerformingCert(false);
   };
-  const [evaluations, setEvaluations] = useState<Avaliacao[]>([]);
-  const [cqs, setCqs] = useState<CQ[]>([]);
+  const [evaluationsState, setEvaluationsState] = useState<Avaliacao[]>([]);
+  const evaluations = Array.isArray(evaluationsState) ? evaluationsState : [];
+  const setEvaluations = (val: any) => {
+    setEvaluationsState(Array.isArray(val) ? val : []);
+  };
+
+  const [cqsState, setCqsState] = useState<CQ[]>([]);
+  const cqs = Array.isArray(cqsState) ? cqsState : [];
+  const setCqs = (val: any) => {
+    setCqsState(Array.isArray(val) ? val : []);
+  };
   const [selectedDashboardDate, setSelectedDashboardDate] = useState<string>(() => {
     const today = new Date();
     const year = today.getFullYear();

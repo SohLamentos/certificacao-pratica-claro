@@ -29,7 +29,17 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     } catch (e) {
       Logger.error("Erro na validação de rate limit no login", e);
     }
-    return await context.next();
+    const response = await context.next();
+    const contentType = response.headers.get("Content-Type") || "";
+    if (contentType.includes("text/html")) {
+      return jsonResponse({
+        success: false,
+        error: "Rota não encontrada",
+        message: `A rota de login '${url.pathname}' não foi encontrada no servidor.`,
+        data: null
+      }, 404);
+    }
+    return response;
   }
 
   // 2. Serve static/uploaded files with valid session
@@ -106,6 +116,18 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
     // Execute downstream handlers
     const response = await context.next();
+
+    // Check if the downstream handler fell back to serving an HTML page (like index.html) for an API route
+    const contentType = response.headers.get("Content-Type") || "";
+    if (contentType.includes("text/html") && url.pathname.startsWith("/api/")) {
+      Logger.warn(`Rota de API não encontrada ou fallback de HTML detectado em: ${url.pathname}`);
+      return jsonResponse({
+        success: false,
+        error: "Rota não encontrada",
+        message: `A rota de API '${url.pathname}' não foi encontrada ou está indisponível.`,
+        data: null
+      }, 404);
+    }
 
     // Standardize all error responses to never return stack traces
     if (response.status === 500) {

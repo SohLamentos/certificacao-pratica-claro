@@ -98,8 +98,18 @@ export default function FormView({ onSave, onCancel, initialData, profile }: For
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   // CQs list state for scheduling
-  const [cqs, setCqs] = useState<CQ[]>([]);
-  const [tecnicos, setTecnicos] = useState<any[]>([]);
+  const [cqsState, setCqsState] = useState<CQ[]>([]);
+  const cqs = Array.isArray(cqsState) ? cqsState : [];
+  const setCqs = (val: any) => {
+    setCqsState(Array.isArray(val) ? val : []);
+  };
+
+  const [tecnicosState, setTecnicosState] = useState<any[]>([]);
+  const tecnicos = Array.isArray(tecnicosState) ? tecnicosState : [];
+  const setTecnicos = (val: any) => {
+    setTecnicosState(Array.isArray(val) ? val : []);
+  };
+
   const [loadingTecnicos, setLoadingTecnicos] = useState(false);
   const [showTecnicoSuggestions, setShowTecnicoSuggestions] = useState(false);
   const [loadingCqs, setLoadingCqs] = useState(false);
@@ -107,7 +117,11 @@ export default function FormView({ onSave, onCancel, initialData, profile }: For
   const [loadingItems, setLoadingItems] = useState(false);
 
   // Dynamic certifications state
-  const [dynamicCerts, setDynamicCerts] = useState<DynamicCertificacao[]>([]);
+  const [dynamicCertsState, setDynamicCertsState] = useState<DynamicCertificacao[]>([]);
+  const dynamicCerts = Array.isArray(dynamicCertsState) ? dynamicCertsState : [];
+  const setDynamicCerts = (val: any) => {
+    setDynamicCertsState(Array.isArray(val) ? val : []);
+  };
   const [certificacaoPerfilRules, setCertificacaoPerfilRules] = useState<Record<string, PerfilPermitido>>({});
 
   const fetchChecklistItemsForCert = async (certName: string) => {

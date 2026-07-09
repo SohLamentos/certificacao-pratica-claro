@@ -55,7 +55,11 @@ export default function CQAvaliacoesDoDia({
   const selectedDate = propSelectedDate || localDate;
   const setSelectedDate = onDateChange || setLocalDate;
   
-  const [cqs, setCqs] = useState<CQ[]>([]);
+  const [cqsState, setCqsState] = useState<CQ[]>([]);
+  const cqs = Array.isArray(cqsState) ? cqsState : [];
+  const setCqs = (val: any) => {
+    setCqsState(Array.isArray(val) ? val : []);
+  };
 
   // Local draft states for theoretical grade inputs
   const [draftNotes, setDraftNotes] = useState<Record<string, string>>({});

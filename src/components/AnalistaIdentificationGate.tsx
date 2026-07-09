@@ -10,7 +10,11 @@ interface AnalistaIdentificationGateProps {
 }
 
 export default function AnalistaIdentificationGate({ onSelectAnalista, onBack }: AnalistaIdentificationGateProps) {
-  const [analistas, setAnalistas] = useState<CQ[]>([]);
+  const [analistasState, setAnalistasState] = useState<CQ[]>([]);
+  const analistas = Array.isArray(analistasState) ? analistasState : [];
+  const setAnalistas = (val: any) => {
+    setAnalistasState(Array.isArray(val) ? val : []);
+  };
   const [selectedId, setSelectedId] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { apiFetch } from '../lib/api';
 import { 
   ArrowLeft, Settings, Shield, RefreshCw, LogOut, CheckCircle2, 
   Award, ClipboardList, AlertTriangle, Database, Plus, Trash2, 
@@ -109,7 +110,7 @@ export default function SettingsView({ onBack, onSwitchProfile }: SettingsViewPr
   const fetchLgpdData = async () => {
     setIsLgpdLoading(true);
     try {
-      const res = await fetch('/api/ia/lgpd');
+      const res = await apiFetch('/api/ia/lgpd');
       const data = await res.json() as any;
       if (data.success) {
         setLgpdConfigs(data.configs);
@@ -125,7 +126,7 @@ export default function SettingsView({ onBack, onSwitchProfile }: SettingsViewPr
   // Fetch all technicians for search
   const fetchTecnicosForLgpd = async () => {
     try {
-      const res = await fetch('/api/tecnicos');
+      const res = await apiFetch('/api/tecnicos');
       const data = await res.json() as any[];
       if (Array.isArray(data)) {
         setAllTecnicos(data);
@@ -146,7 +147,7 @@ export default function SettingsView({ onBack, onSwitchProfile }: SettingsViewPr
   // Handle save single config
   const handleSaveLgpdConfig = async (chave: string, valor: string) => {
     try {
-      const res = await fetch('/api/ia/lgpd', {
+      const res = await apiFetch('/api/ia/lgpd', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -178,7 +179,7 @@ export default function SettingsView({ onBack, onSwitchProfile }: SettingsViewPr
     
     setIsPurging(true);
     try {
-      const res = await fetch('/api/ia/lgpd', {
+      const res = await apiFetch('/api/ia/lgpd', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -208,7 +209,7 @@ export default function SettingsView({ onBack, onSwitchProfile }: SettingsViewPr
     }
 
     try {
-      const res = await fetch('/api/ia/lgpd', {
+      const res = await apiFetch('/api/ia/lgpd', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -237,7 +238,7 @@ export default function SettingsView({ onBack, onSwitchProfile }: SettingsViewPr
     }
 
     try {
-      const res = await fetch('/api/ia/lgpd', {
+      const res = await apiFetch('/api/ia/lgpd', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

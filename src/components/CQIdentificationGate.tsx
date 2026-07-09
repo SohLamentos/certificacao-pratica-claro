@@ -10,7 +10,11 @@ interface CQIdentificationGateProps {
 }
 
 export default function CQIdentificationGate({ onSelectCQ, onBack }: CQIdentificationGateProps) {
-  const [cqs, setCqs] = useState<CQ[]>([]);
+  const [cqsState, setCqsState] = useState<CQ[]>([]);
+  const cqs = Array.isArray(cqsState) ? cqsState : [];
+  const setCqs = (val: any) => {
+    setCqsState(Array.isArray(val) ? val : []);
+  };
   const [selectedId, setSelectedId] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);

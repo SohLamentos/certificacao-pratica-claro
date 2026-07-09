@@ -10,7 +10,11 @@ interface CQManagerViewProps {
 }
 
 export default function CQManagerView({ onBack, evaluations }: CQManagerViewProps) {
-  const [cqs, setCqs] = useState<CQ[]>([]);
+  const [cqsState, setCqsState] = useState<CQ[]>([]);
+  const cqs = Array.isArray(cqsState) ? cqsState : [];
+  const setCqs = (val: any) => {
+    setCqsState(Array.isArray(val) ? val : []);
+  };
   const [isEditing, setIsEditing] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 

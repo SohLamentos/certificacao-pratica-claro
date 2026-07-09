@@ -1,4 +1,5 @@
 import { Env } from './_db';
+import { getAppConfig } from './_config';
 
 // Declare global Cloudflare types so TypeScript doesn't complain in browser configuration
 declare class WebSocketPair {
@@ -7,6 +8,25 @@ declare class WebSocketPair {
 }
 
 export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
+  const config = getAppConfig(env);
+  const isRealtimeEnabled = config.ENABLE_REALTIME === true;
+
+  const upgradeHeader = request.headers.get("Upgrade");
+  const isWebSocketUpgrade = upgradeHeader && upgradeHeader.toLowerCase() === "websocket";
+
+  // Standard GET request to check realtime availability without upgrading to WebSocket
+  if (!isWebSocketUpgrade && request.method === "GET") {
+    return new Response(JSON.stringify({ enabled: isRealtimeEnabled }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+
+  // If real-time is disabled, do not proceed with Durable Objects / WebSockets
+  if (!isRealtimeEnabled) {
+    return new Response("Realtime is disabled", { status: 403 });
+  }
+
   if (!env.RealtimeHub) {
     return new Response("Durable Object namespace RealtimeHub not found", { status: 500 });
   }

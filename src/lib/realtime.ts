@@ -1,7 +1,89 @@
+import { apiFetch, isBackendAvailable } from './api';
+
 export function connectRealtime(onLogout: () => void) {
+  const isRealtimeConfigured = process.env.ENABLE_REALTIME === 'true';
+
+  if (!isRealtimeConfigured) {
+    console.log("Realtime is disabled (ENABLE_REALTIME=false). Skipping WebSocket and API checks.");
+    return () => {}; // return cleanup function
+  }
+
   let ws: WebSocket | null = null;
   let reconnectTimeout: any = null;
+  let pollingInterval: any = null;
   let isClosedCleanly = false;
+
+  async function pollCqs() {
+    if (!isBackendAvailable) {
+      console.log("Backend not detected as active. Skipping poll.");
+      return;
+    }
+    try {
+      const res = await apiFetch('/api/cqs');
+      if (!res.ok) return;
+      const cqs: any[] = await res.json();
+      if (!Array.isArray(cqs)) return; // Safety check
+
+      // Check if our currently selected evaluator is still active and exists in the new list
+      const cqSaved = localStorage.getItem('claro_cq_selecionado');
+      const analistaSaved = localStorage.getItem('claro_analista_selecionado');
+      const currentProfile = localStorage.getItem('claro_cq_profile');
+
+      let currentId: string | null = null;
+      if (currentProfile === 'CQ' && cqSaved) {
+        try { currentId = String(JSON.parse(cqSaved).id); } catch (e) {}
+      } else if (currentProfile === 'Analista' && analistaSaved) {
+        try { currentId = String(JSON.parse(analistaSaved).id); } catch (e) {}
+      }
+
+      if (currentId) {
+        const currentEvaluator = cqs.find(item => String(item.id) === currentId);
+        if (!currentEvaluator || currentEvaluator.status === 'Inativo') {
+          console.warn("Current evaluator is deleted or inactive. Logging out...");
+          checkAndClearSession(currentId);
+          onLogout();
+          return;
+        }
+      }
+
+      // Dispatch diff-check events to update lists in CQManagerView in real-time
+      const prevCqsStr = sessionStorage.getItem('prev_polled_cqs');
+      if (prevCqsStr) {
+        try {
+          const prevCqs: any[] = JSON.parse(prevCqsStr);
+          if (Array.isArray(prevCqs)) {
+            // Detect deleted
+            for (const prev of prevCqs) {
+              const stillExists = cqs.some(c => String(c.id) === String(prev.id));
+              if (!stillExists) {
+                window.dispatchEvent(new CustomEvent('realtime-cq-event', {
+                  detail: { type: 'AVALIADOR_DELETADO', avaliadorId: prev.id }
+                }));
+              }
+            }
+            // Detect updated
+            for (const curr of cqs) {
+              const prev = prevCqs.find(p => String(p.id) === String(curr.id));
+              if (prev && prev.status !== curr.status) {
+                window.dispatchEvent(new CustomEvent('realtime-cq-event', {
+                  detail: { type: 'AVALIADOR_ATUALIZADO', avaliadorId: curr.id, status: curr.status }
+                }));
+              }
+            }
+          }
+        } catch (e) {}
+      }
+      sessionStorage.setItem('prev_polled_cqs', JSON.stringify(cqs));
+    } catch (err) {
+      console.error("Error polling CQs:", err);
+    }
+  }
+
+  function startPolling() {
+    if (isClosedCleanly) return;
+    pollCqs();
+    pollingInterval = setInterval(pollCqs, 10000);
+  }
 
   function connect() {
     if (isClosedCleanly) return;
@@ -49,15 +131,43 @@ export function connectRealtime(onLogout: () => void) {
 
     ws.onerror = (err) => {
       console.error("WebSocket error:", err);
-      // Let onclose handle the reconnection
     };
   }
 
-  connect();
+  async function checkRealtimeStatus() {
+    if (!isBackendAvailable) {
+      console.warn("Backend not active/available. Realtime connection and polling disabled.");
+      return;
+    }
+
+    try {
+      const res = await apiFetch('/api/realtime');
+      if (res.ok) {
+        const data = await res.json() as { enabled: boolean };
+        if (data && data.enabled) {
+          console.log("Realtime enabled on backend. Initializing WebSocket...");
+          connect();
+        } else {
+          console.log("Realtime disabled on backend. Initializing simple polling...");
+          startPolling();
+        }
+      } else {
+        console.warn("Could not retrieve realtime status. Falling back to simple polling.");
+        startPolling();
+      }
+    } catch (e) {
+      console.error("Error checking realtime status, falling back to simple polling:", e);
+      startPolling();
+    }
+  }
+
+  // Delay the check slightly to allow isBackendAvailable to be computed by the first API calls on app mount
+  setTimeout(checkRealtimeStatus, 2000);
 
   return () => {
     isClosedCleanly = true;
     clearTimeout(reconnectTimeout);
+    clearInterval(pollingInterval);
     if (ws) {
       ws.close();
     }
