@@ -1,27 +1,29 @@
 # Cloudflare Wrangler Configuration File for Claro CQ Portal
 name = "claro-cq-portal"
 pages_build_output_dir = "dist"
-compatibility_date = "2026-07-08"
+compatibility_date = "2026-07-04"
 
 [vars]
+ENABLE_WORKERS_AI = "false"
+ENABLE_AI_AUTO_ANALYSIS = "false"
+ENABLE_AI_MANUAL_TRIGGER = "true"
+ENABLE_CLOUDFLARE_QUEUES = "false"
+ENABLE_DURABLE_OBJECTS = "false"
+ENABLE_REALTIME = "false"
+ENABLE_KNOWLEDGE_BASE = "true"
+ENABLE_AI_FEEDBACK = "true"
+ENABLE_CONFIDENCE_SCORE = "true"
 MAX_ANALISES_IA_DIA = "100"
 MAX_ANALISES_IA_MES = "3000"
-ia_modo_automatico_gratis = "true"
-ia_exigir_confirmacao_quando_pago = "true"
-ia_limite_gratuito_diario = "50"
-ia_limite_gratuito_mensal = "1500"
-ENABLE_DURABLE_OBJECTS = "false"
-ENABLE_CLOUDFLARE_QUEUES = "false"
-ENABLE_REALTIME = "false"
-ENABLE_WORKERS_AI = "false"
+MAX_ANALISES_IA_POR_USUARIO_DIA = "10"
 
 # Cloudflare D1 Database Binding
 [[d1_databases]]
 binding = "DB"
-database_name = "claro-cq-d1"
-database_id = "SEU_DATABASE_ID_AQUI" # Substituir com o ID real após criar o D1
+database_name = "certificacao_etn_cq"
+database_id = "e8f1d64b-8770-4f97-879a-190cb5f830b7"
 
 # Cloudflare R2 Storage Binding for Evidence Uploads
 [[r2_buckets]]
 binding = "EVIDENCIAS_BUCKET"
-bucket_name = "claro-cq-evidencias"
+bucket_name = "certificacao-etn-cq-evidencias"
