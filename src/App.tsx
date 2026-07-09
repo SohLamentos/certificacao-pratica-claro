@@ -148,6 +148,7 @@ export default function App() {
   const [currentView, setCurrentView] = useState<string>('home');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isPerformingCert, setIsPerformingCert] = useState(false);
+  const [isAuthReady, setIsAuthReady] = useState(false);
 
   const triggerServerLogin = useCallback(async (userId: string, profile: 'analista' | 'cq') => {
     try {
@@ -161,23 +162,41 @@ export default function App() {
         const token = result.token || result.data?.token;
         if (result.success && token) {
           localStorage.setItem('claro_cq_auth_token', token);
+          return true;
         }
       }
+      return false;
     } catch (e) {
       console.error("Falha ao sincronizar sessão segura com o servidor", e);
+      return false;
     }
   }, []);
 
   // Sync session on mount/change of selection
   useEffect(() => {
+    let active = true;
     const syncSession = async () => {
+      setIsAuthReady(false);
       if (currentProfile === 'cq' && selectedCQ?.id) {
-        await triggerServerLogin(selectedCQ.id, 'cq');
+        const ok = await triggerServerLogin(selectedCQ.id, 'cq');
+        if (active && ok) {
+          setIsAuthReady(true);
+        }
       } else if (currentProfile === 'analista' && selectedAnalista?.id) {
-        await triggerServerLogin(selectedAnalista.id, 'analista');
+        const ok = await triggerServerLogin(selectedAnalista.id, 'analista');
+        if (active && ok) {
+          setIsAuthReady(true);
+        }
+      } else {
+        if (active) {
+          setIsAuthReady(true);
+        }
       }
     };
     syncSession();
+    return () => {
+      active = false;
+    };
   }, [currentProfile, selectedCQ?.id, selectedAnalista?.id, triggerServerLogin]);
 
   const handleSelectCQ = async (cq: CQ | null) => {
@@ -327,7 +346,7 @@ export default function App() {
 
   // Load certifications and evaluations asynchronously (reactive to profile, view and selected dashboard date)
   useEffect(() => {
-    if (!currentProfile) return;
+    if (!currentProfile || !isAuthReady) return;
     const loadAllData = async () => {
       try {
         // Fetch Certificações
@@ -353,7 +372,7 @@ export default function App() {
       }
     };
     loadAllData();
-  }, [currentProfile, selectedDashboardDate, currentView, refreshEvaluations]);
+  }, [currentProfile, isAuthReady, selectedDashboardDate, currentView, refreshEvaluations]);
 
   // Show a floating toast message helper
   const showToast = (message: string, type: 'success' | 'info' | 'error' = 'success') => {
