@@ -70,6 +70,14 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
     // Set backend availability on a successful JSON/non-HTML response
     isBackendAvailable = true;
 
+    // Inspect headers for auth enabled status from backend
+    const authEnabledHeader = response.headers.get("X-Auth-Enabled");
+    if (authEnabledHeader === "false") {
+      localStorage.setItem('claro_cq_auth_enabled', 'false');
+    } else if (authEnabledHeader === "true") {
+      localStorage.setItem('claro_cq_auth_enabled', 'true');
+    }
+
     // Decorate the response.json method to safely handle non-JSON responses and HTML fallbacks
     response.json = async function () {
       try {
@@ -80,7 +88,12 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
           isBackendAvailable = false;
           return getFallbackDataForPath(path);
         }
-        return JSON.parse(trimmed);
+        const parsed = JSON.parse(trimmed);
+        // If parsed response itself contains authEnabled key, update storage
+        if (parsed && typeof parsed === 'object' && 'authEnabled' in parsed) {
+          localStorage.setItem('claro_cq_auth_enabled', parsed.authEnabled ? 'true' : 'false');
+        }
+        return parsed;
       } catch (err) {
         console.error("Failed to parse JSON response for path:", path, err);
         return getFallbackDataForPath(path);
@@ -89,11 +102,16 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
 
     // Automatically clear expired session token on 401
     if (response.status === 401) {
-      localStorage.removeItem('claro_cq_auth_token');
-      localStorage.removeItem('claro_cq_selecionado');
-      localStorage.removeItem('claro_analista_selecionado');
-      localStorage.removeItem('claro_cq_profile');
-      window.dispatchEvent(new CustomEvent('claro-cq-auth-expired'));
+      const isAuthEnabled = localStorage.getItem('claro_cq_auth_enabled') !== 'false';
+      if (isAuthEnabled) {
+        localStorage.removeItem('claro_cq_auth_token');
+        localStorage.removeItem('claro_cq_selecionado');
+        localStorage.removeItem('claro_analista_selecionado');
+        localStorage.removeItem('claro_cq_profile');
+        window.dispatchEvent(new CustomEvent('claro-cq-auth-expired'));
+      } else {
+        console.log("Ignorando resposta 401 pois a autenticação está desativada (ENABLE_AUTH=false).");
+      }
     }
 
     return response;

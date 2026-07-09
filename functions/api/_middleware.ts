@@ -14,6 +14,14 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     Logger.error("Falha fatal ao inicializar banco de dados D1", err);
   }
 
+  // Bypass authentication and other checks if ENABLE_AUTH is not set to true (for development/MVP testing)
+  if (env.ENABLE_AUTH !== "true") {
+    const response = await context.next();
+    // Inject authEnabled: false header or standard response verification if needed
+    response.headers.set("X-Auth-Enabled", "false");
+    return response;
+  }
+
   // 1. Public Authentication Route Bypass with Rate Limiting (20/min per IP)
   if (url.pathname.startsWith('/api/auth/login') || (url.pathname.startsWith('/api/cqs') && request.method === 'GET')) {
     if (url.pathname.startsWith('/api/auth/login')) {

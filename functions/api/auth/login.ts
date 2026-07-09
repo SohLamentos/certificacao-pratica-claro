@@ -81,6 +81,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       success: true,
       error: null,
       message: "Autenticação realizada com sucesso.",
+      authEnabled: env.ENABLE_AUTH === "true",
       data: {
         token,
         profile,

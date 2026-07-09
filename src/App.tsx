@@ -148,7 +148,9 @@ export default function App() {
   const [currentView, setCurrentView] = useState<string>('home');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isPerformingCert, setIsPerformingCert] = useState(false);
-  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [isAuthReady, setIsAuthReady] = useState(() => {
+    return localStorage.getItem('claro_cq_auth_enabled') === 'false';
+  });
 
   const triggerServerLogin = useCallback(async (userId: string, profile: 'analista' | 'cq') => {
     try {
@@ -176,6 +178,14 @@ export default function App() {
   useEffect(() => {
     let active = true;
     const syncSession = async () => {
+      const isAuthEnabled = localStorage.getItem('claro_cq_auth_enabled') !== 'false';
+      if (!isAuthEnabled) {
+        if (active) {
+          setIsAuthReady(true);
+        }
+        return;
+      }
+
       setIsAuthReady(false);
       if (currentProfile === 'cq' && selectedCQ?.id) {
         const ok = await triggerServerLogin(selectedCQ.id, 'cq');
@@ -329,6 +339,11 @@ export default function App() {
   // Listen to secure session expiration/401 errors from server
   useEffect(() => {
     const handleAuthExpired = () => {
+      const isAuthEnabled = localStorage.getItem('claro_cq_auth_enabled') !== 'false';
+      if (!isAuthEnabled) {
+        console.log("Ignorando logout automático por evento de expiração pois a autenticação está desativada.");
+        return;
+      }
       setCurrentProfile(null);
       setSelectedCQ(null);
       setSelectedAnalista(null);

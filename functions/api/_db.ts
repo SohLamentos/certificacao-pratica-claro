@@ -24,6 +24,7 @@ export interface Env {
   ENABLE_CLOUDFLARE_QUEUES?: string | boolean;
   ENABLE_DURABLE_OBJECTS?: string | boolean;
   ENABLE_REALTIME?: string | boolean;
+  ENABLE_AUTH?: string | boolean;
   ENABLE_KV_CACHE?: string | boolean;
   ENABLE_EDGE_CACHE?: string | boolean;
   ENABLE_OBSERVABILITY_BASIC?: string | boolean;
