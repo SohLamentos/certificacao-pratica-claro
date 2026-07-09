@@ -158,8 +158,9 @@ export default function App() {
       });
       if (response.ok) {
         const result = await response.json() as any;
-        if (result.success && result.token) {
-          localStorage.setItem('claro_cq_auth_token', result.token);
+        const token = result.token || result.data?.token;
+        if (result.success && token) {
+          localStorage.setItem('claro_cq_auth_token', token);
         }
       }
     } catch (e) {
@@ -304,6 +305,24 @@ export default function App() {
       alert("A sua sessão de avaliador foi encerrada (usuário excluído ou inativado).");
     });
     return () => disconnect();
+  }, []);
+
+  // Listen to secure session expiration/401 errors from server
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      setCurrentProfile(null);
+      setSelectedCQ(null);
+      setSelectedAnalista(null);
+      setCurrentView('home');
+      setEditingEvaluation(null);
+      setIsMobileMenuOpen(false);
+      setIsPerformingCert(false);
+      alert("Sua sessão expirou ou é inválida. Por favor, identifique-se novamente.");
+    };
+    window.addEventListener('claro-cq-auth-expired', handleAuthExpired);
+    return () => {
+      window.removeEventListener('claro-cq-auth-expired', handleAuthExpired);
+    };
   }, []);
 
   // Load certifications and evaluations asynchronously (reactive to profile, view and selected dashboard date)

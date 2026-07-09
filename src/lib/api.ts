@@ -90,6 +90,10 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
     // Automatically clear expired session token on 401
     if (response.status === 401) {
       localStorage.removeItem('claro_cq_auth_token');
+      localStorage.removeItem('claro_cq_selecionado');
+      localStorage.removeItem('claro_analista_selecionado');
+      localStorage.removeItem('claro_cq_profile');
+      window.dispatchEvent(new CustomEvent('claro-cq-auth-expired'));
     }
 
     return response;
