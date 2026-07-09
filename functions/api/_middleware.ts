@@ -15,19 +15,21 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   }
 
   // 1. Public Authentication Route Bypass with Rate Limiting (20/min per IP)
-  if (url.pathname.startsWith('/api/auth/login')) {
-    try {
-      const { applyRateLimit } = await import('./_ratelimit');
-      const rateLimitResult = await applyRateLimit(env, 'login', clientIp);
-      if (!rateLimitResult.allowed) {
-        return jsonResponse({
-          success: false,
-          error: "Muitas solicitações",
-          message: "Limite de tentativas de login excedido. Tente novamente em 1 minuto."
-        }, 429);
+  if (url.pathname.startsWith('/api/auth/login') || (url.pathname.startsWith('/api/cqs') && request.method === 'GET')) {
+    if (url.pathname.startsWith('/api/auth/login')) {
+      try {
+        const { applyRateLimit } = await import('./_ratelimit');
+        const rateLimitResult = await applyRateLimit(env, 'login', clientIp);
+        if (!rateLimitResult.allowed) {
+          return jsonResponse({
+            success: false,
+            error: "Muitas solicitações",
+            message: "Limite de tentativas de login excedido. Tente novamente em 1 minuto."
+          }, 429);
+        }
+      } catch (e) {
+        Logger.error("Erro na validação de rate limit no login", e);
       }
-    } catch (e) {
-      Logger.error("Erro na validação de rate limit no login", e);
     }
     const response = await context.next();
     const contentType = response.headers.get("Content-Type") || "";
@@ -35,7 +37,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       return jsonResponse({
         success: false,
         error: "Rota não encontrada",
-        message: `A rota de login '${url.pathname}' não foi encontrada no servidor.`,
+        message: `A rota pública '${url.pathname}' não foi encontrada no servidor.`,
         data: null
       }, 404);
     }

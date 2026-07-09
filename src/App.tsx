@@ -249,6 +249,7 @@ export default function App() {
 
   // Fetch updated evaluations from the D1 API based on view context
   const refreshEvaluations = useCallback(async () => {
+    if (!currentProfile) return;
     try {
       let url = '/api/avaliacoes';
       const params = new URLSearchParams();
@@ -307,6 +308,7 @@ export default function App() {
 
   // Load certifications and evaluations asynchronously (reactive to profile, view and selected dashboard date)
   useEffect(() => {
+    if (!currentProfile) return;
     const loadAllData = async () => {
       try {
         // Fetch Certificações
