@@ -39,7 +39,14 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     const finalPerfil = perfil_usuario || "SISTEMA";
 
     // Generate login_hash using Web Crypto API
-    const salt = env.LGPD_HASH_SALT || "claro_cq_lgpd_salt_2026_prod";
+    if (!env.LGPD_HASH_SALT) {
+      return jsonResponse({
+        success: false,
+        error: "Configuração Ausente",
+        message: "Erro de Configuração: A chave LGPD_HASH_SALT não foi configurada no ambiente."
+      }, 500);
+    }
+    const salt = env.LGPD_HASH_SALT;
     const input = `${finalUserId}:${salt}`;
     const enc = new TextEncoder();
     const hashData = enc.encode(input);

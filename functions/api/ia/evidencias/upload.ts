@@ -80,7 +80,14 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     }
 
     // Generate login_hash using Web Crypto API
-    const salt = env.LGPD_HASH_SALT || "claro_cq_lgpd_salt_2026_prod";
+    if (!env.LGPD_HASH_SALT) {
+      return jsonResponse({
+        success: false,
+        error: "Configuração Ausente",
+        message: "Erro de Configuração: A chave LGPD_HASH_SALT não foi configurada no ambiente."
+      }, 500);
+    }
+    const salt = env.LGPD_HASH_SALT;
     const input = `${finalUserId}:${salt}`;
     const enc = new TextEncoder();
     const hashData = enc.encode(input);
@@ -133,6 +140,14 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     const ia_hash_arquivo = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 
     // HMAC Signature to prevent re-using this image in other certifications
+    if (!config.IMAGE_SIGNING_SECRET) {
+      return jsonResponse({
+        success: false,
+        error: "Configuração Ausente",
+        message: "Erro de Configuração: A chave IMAGE_SIGNING_SECRET não foi configurada no ambiente."
+      }, 500);
+    }
+
     const image_signature = await computeHMAC(`${ia_hash_arquivo}:${finalUserId}:${certificacao_id}`, config.IMAGE_SIGNING_SECRET);
 
     // Query D1 to check if a file with the same SHA-256 hash already exists

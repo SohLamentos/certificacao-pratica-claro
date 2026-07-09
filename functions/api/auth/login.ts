@@ -21,7 +21,19 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       });
     }
 
-    const salt = env.LGPD_HASH_SALT || "claro_cq_lgpd_salt_2026_prod";
+    if (!env.LGPD_HASH_SALT) {
+      return new Response(JSON.stringify({
+        success: false,
+        error: "Configuração Ausente",
+        message: "Erro de Configuração: A chave LGPD_HASH_SALT não foi configurada no ambiente.",
+        data: null
+      }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    const salt = env.LGPD_HASH_SALT;
     const expiresAt = Date.now() + 2 * 60 * 60 * 1000; // 2 horas de sessão
 
     const payload = {

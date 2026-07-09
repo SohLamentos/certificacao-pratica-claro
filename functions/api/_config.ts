@@ -46,8 +46,8 @@ export function getAppConfig(env: Env) {
     MAX_ANALISES_IA_POR_USUARIO_DIA: getNumericEnv(env, 'MAX_ANALISES_IA_POR_USUARIO_DIA', 10),
 
     // Secrets
-    IMAGE_SIGNING_SECRET: env.IMAGE_SIGNING_SECRET || 'claro_cq_signing_secret_super_secure_key_2026',
-    LGPD_HASH_SALT: env.LGPD_HASH_SALT || 'claro_cq_lgpd_salt_2026',
+    IMAGE_SIGNING_SECRET: env.IMAGE_SIGNING_SECRET,
+    LGPD_HASH_SALT: env.LGPD_HASH_SALT,
     RETENCAO_EVIDENCIAS_DIAS: getNumericEnv(env, 'RETENCAO_EVIDENCIAS_DIAS', 180),
     RETENCAO_LOGS_DIAS: getNumericEnv(env, 'RETENCAO_LOGS_DIAS', 90),
   };

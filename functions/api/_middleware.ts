@@ -49,7 +49,16 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
 
     const token = authHeader.substring(7);
-    const salt = env.LGPD_HASH_SALT || "claro_cq_lgpd_salt_2026_prod";
+    if (!env.LGPD_HASH_SALT) {
+      Logger.error(`Acesso negado: LGPD_HASH_SALT não configurado no ambiente para ${url.pathname}`);
+      return jsonResponse({
+        success: false,
+        error: "Erro de Configuração",
+        message: "Erro de Configuração: A chave LGPD_HASH_SALT não foi configurada no ambiente.",
+        data: null
+      }, 500);
+    }
+    const salt = env.LGPD_HASH_SALT;
     const userPayload = await AuthService.verifyToken(token, salt);
 
     if (!userPayload) {
