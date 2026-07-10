@@ -108,7 +108,72 @@ export class EvaluationService {
       await EvaluationRepository.syncResponses(db, data.id, data.checklistResponses);
     }
 
-    return await EvaluationRepository.getById(db, data.id || payload.id);
+    const savedEval = await EvaluationRepository.getById(db, data.id || payload.id);
+    if (savedEval && savedEval.status) {
+      await EvaluationService.handleEvaluationFinalization(db, savedEval.id, savedEval.status);
+    }
+
+    return savedEval;
+  }
+
+  static async handleEvaluationFinalization(db: D1Database, evaluationId: string, status: string): Promise<void> {
+    const finalStatuses = ['APROVADO', 'APROVADA', 'REPROVADO', 'REPROVADA', 'NO_SHOW', 'CANCELADO', 'CANCELADA'];
+    if (!finalStatuses.includes(String(status).toUpperCase())) {
+      return;
+    }
+
+    const nowStr = new Date().toISOString();
+
+    // Fetch evaluation to check if finalizada_em is already set
+    const evalRow = await db.prepare("SELECT finalizada_em FROM avaliacoes WHERE id = ?").bind(evaluationId).first() as { finalizada_em: string | null } | null;
+
+    let finalizadaEm = evalRow?.finalizada_em;
+    if (!finalizadaEm) {
+      finalizadaEm = nowStr;
+      await db.prepare("UPDATE avaliacoes SET finalizada_em = ? WHERE id = ?")
+        .bind(finalizadaEm, evaluationId).run();
+    }
+
+    // Compute retencao_ate = finalizada_em + 30 days
+    const computedRetencaoDate = new Date(new Date(finalizadaEm).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    // Update matching evidences
+    await db.prepare(`
+      UPDATE ia_evidencias 
+      SET retencao_ate = ?, arquivo_excluido = 0, updated_at = CURRENT_TIMESTAMP 
+      WHERE certificacao_id = ? AND (retencao_ate IS NULL OR retencao_ate = '')
+    `).bind(computedRetencaoDate, evaluationId).run();
+
+    await db.prepare(`
+      UPDATE evidencias 
+      SET retencao_ate = ?, arquivo_excluido = 0, updated_at = CURRENT_TIMESTAMP 
+      WHERE avaliacao_id = ? AND (retencao_ate IS NULL OR retencao_ate = '')
+    `).bind(computedRetencaoDate, evaluationId).run();
+
+    // Log auditoria for each evidence if not already logged
+    try {
+      const { results: iaEvs } = await db.prepare("SELECT id, etapa FROM ia_evidencias WHERE certificacao_id = ?").bind(evaluationId).all();
+      for (const ev of (iaEvs || [])) {
+        const check = await db.prepare("SELECT COUNT(*) as cnt FROM ia_auditoria WHERE evidencia_id = ? AND acao = 'EVIDENCIA_RETENCAO_INICIADA'").bind(ev.id).first() as { cnt: number } | null;
+        if (!check || check.cnt === 0) {
+          await db.prepare(`
+            INSERT INTO ia_auditoria (certificacao_id, evidencia_id, acao, payload, usuario_id, perfil_usuario, login_hash)
+            VALUES (?, ?, 'EVIDENCIA_RETENCAO_INICIADA', ?, 'sistema', 'sistema', '')
+          `).bind(
+            evaluationId,
+            ev.id,
+            JSON.stringify({
+              etapa: ev.etapa,
+              finalizada_em: finalizadaEm,
+              retencao_ate: computedRetencaoDate,
+              status_avaliacao: status
+            })
+          ).run();
+        }
+      }
+    } catch (e) {
+      console.error("Erro ao registrar auditoria de retenção:", e);
+    }
   }
 }
 
@@ -270,6 +335,7 @@ export class EvidenceService {
         "UPDATE avaliacoes SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
       ).bind(finalStatus, certificacaoId).run();
       Logger.info(`Avaliação ${certificacaoId} finalizada automaticamente como ${finalStatus}`);
+      await EvaluationService.handleEvaluationFinalization(db, certificacaoId, finalStatus);
     }
 
     return { success: true };

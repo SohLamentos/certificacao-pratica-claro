@@ -6,6 +6,7 @@ import {
   Upload, 
   Loader2, 
   ShieldCheck, 
+  ShieldAlert,
   FileCheck, 
   ChevronDown, 
   ChevronUp, 
@@ -15,6 +16,7 @@ import {
   Clock
 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
+import DocumentoPrivacidade from './DocumentoPrivacidade';
 
 interface PortalTecnicoProps {
   token?: string;
@@ -88,36 +90,103 @@ async function processAndCompressImage(file: File): Promise<{ base64: string; si
       const img = new Image();
       img.src = event.target?.result as string;
       img.onload = () => {
-        const canvas = document.createElement('canvas');
-        let width = img.width;
-        let height = img.height;
-        const maxDimension = 1600; // high quality limit
-
-        if (width > maxDimension || height > maxDimension) {
-          if (width > height) {
-            height = Math.round((height * maxDimension) / width);
-            width = maxDimension;
-          } else {
-            width = Math.round((width * maxDimension) / height);
-            height = maxDimension;
-          }
+        // Test output format compatibility (prefer webp)
+        let format = 'image/webp';
+        const testCanvas = document.createElement('canvas');
+        if (testCanvas.toDataURL('image/webp').indexOf('data:image/webp') !== 0) {
+          format = 'image/jpeg';
         }
 
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        ctx?.drawImage(img, 0, 0, width, height);
-
-        // Compress as JPEG at 0.8 quality (strips EXIF metadata automatically)
-        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.8);
-        const sizeInBytes = Math.round((compressedBase64.length * 3) / 4);
-
-        resolve({
-          base64: compressedBase64,
-          size: sizeInBytes,
-          width,
-          height
-        });
+        const width = img.width;
+        const height = img.height;
+        
+        // Quality and scale lists to adaptively compress
+        const qualities = [0.85, 0.75, 0.60, 0.45];
+        const dimensions = [1600, 1200, 960];
+        
+        let bestBase64 = '';
+        let bestSize = Infinity;
+        let finalWidth = width;
+        let finalHeight = height;
+        
+        let attempts = 0;
+        const maxAttempts = 8;
+        
+        // Loop through dimensions and qualities
+        for (const maxDim of dimensions) {
+          if (attempts >= maxAttempts) break;
+          
+          let w = img.width;
+          let h = img.height;
+          if (w > maxDim || h > maxDim) {
+            if (w > h) {
+              h = Math.round((h * maxDim) / w);
+              w = maxDim;
+            } else {
+              w = Math.round((w * maxDim) / h);
+              h = maxDim;
+            }
+          }
+          
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          
+          // Clear EXIF and correct orientation by drawing on canvas
+          ctx?.drawImage(img, 0, 0, w, h);
+          
+          for (const q of qualities) {
+            attempts++;
+            if (attempts >= maxAttempts) break;
+            
+            const b64 = canvas.toDataURL(format, q);
+            const size = Math.round((b64.length * 3) / 4);
+            
+            // If it is in our sweet spot (300 KB to 800 KB) or under 1MB
+            if (size <= 1024 * 1024) {
+              if (size >= 300 * 1024 && size <= 800 * 1024) {
+                // Perfect hit!
+                resolve({ base64: b64, size, width: w, height: h });
+                return;
+              }
+              // If it's the first one that is <= 1MB, or it's closer/smaller
+              if (size < bestSize || bestSize > 1024 * 1024) {
+                bestBase64 = b64;
+                bestSize = size;
+                finalWidth = w;
+                finalHeight = h;
+              }
+            }
+          }
+        }
+        
+        // If we found a valid compression
+        if (bestBase64) {
+          resolve({ base64: bestBase64, size: bestSize, width: finalWidth, height: finalHeight });
+        } else {
+          // Absolute fallback using 1200px at 0.5 quality
+          const canvas = document.createElement('canvas');
+          let w = img.width;
+          let h = img.height;
+          const maxDim = 1200;
+          if (w > maxDim || h > maxDim) {
+            if (w > h) {
+              h = Math.round((h * maxDim) / w);
+              w = maxDim;
+            } else {
+              w = Math.round((w * maxDim) / h);
+              h = maxDim;
+            }
+          }
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0, w, h);
+          const b64 = canvas.toDataURL('image/jpeg', 0.5);
+          const size = Math.round((b64.length * 3) / 4);
+          resolve({ base64: b64, size, width: w, height: h });
+        }
       };
       img.onerror = (err) => reject(err);
     };
@@ -208,6 +277,7 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
   const [hasAcceptedLgpdLocally, setHasAcceptedLgpdLocally] = useState<boolean>(false);
   const [lgpdChecked, setLgpdChecked] = useState<boolean>(false);
   const [showPolicyDetails, setShowPolicyDetails] = useState<boolean>(false);
+  const [showFullPrivacyDoc, setShowFullPrivacyDoc] = useState<boolean>(false);
 
   // Load portal data
   const loadPortalDataForToken = async (currentToken: string, currentSessionHash?: string, silent = false) => {
@@ -668,6 +738,20 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
   const totalMandatory = mandatoryMissions.length;
   const isFullyComplete = totalMandatoryUploaded === totalMandatory;
 
+  // Render Full Privacy Document if triggered
+  if (showFullPrivacyDoc) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-white flex flex-col justify-center items-center p-4 sm:p-6 overflow-y-auto" id="full-privacy-doc-modal">
+        <DocumentoPrivacidade 
+          onClose={() => setShowFullPrivacyDoc(false)} 
+          token={token || selectedPortalToken}
+          avaliacaoId={portal?.avaliacao_id || evaluation?.id}
+          sessionHash={sessionHash}
+        />
+      </div>
+    );
+  }
+
   // Render Success Screen if finalized
   if (showSuccessScreen || portal?.status === "EVIDENCIAS_ENVIADAS") {
     return (
@@ -783,6 +867,15 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
                 </div>
               </div>
             )}
+
+            <button
+              type="button"
+              onClick={() => setShowFullPrivacyDoc(true)}
+              className="mt-3 w-full py-2.5 px-3 bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-xs text-slate-300 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer font-semibold shadow-inner"
+            >
+              <ShieldCheck className="w-4 h-4 text-emerald-500" />
+              Ver Documento de Segurança e Privacidade Completo
+            </button>
           </div>
 
           <div className="space-y-4 pt-2">
@@ -1125,6 +1218,22 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
               );
             })
           )}
+        </div>
+
+        {/* Transparência e LGPD */}
+        <div className="max-w-xl mx-auto mt-6 bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4 flex items-start gap-3 text-[11px] text-slate-400 leading-relaxed shadow-sm">
+          <ShieldAlert size={18} className="text-red-500 shrink-0 mt-0.5" />
+          <div>
+            <strong className="text-slate-200 block font-semibold mb-0.5">Aviso de Privacidade &amp; LGPD (Segurança de Dados)</strong>
+            Suas fotos são utilizadas exclusivamente para validação técnica da qualidade da instalação. Em conformidade com a LGPD, todos os arquivos de evidências fotográficas serão <strong>removidos definitivamente</strong> dos nossos servidores <strong>30 dias</strong> após a conclusão desta avaliação prática. Nenhuma imagem é mantida além do prazo legal de retenção técnica.
+            <button
+              type="button"
+              onClick={() => setShowFullPrivacyDoc(true)}
+              className="mt-2 text-red-500 hover:text-red-400 underline font-semibold flex items-center gap-1 cursor-pointer block"
+            >
+              Consultar Documento Completo de Segurança e Privacidade (PDF)
+            </button>
+          </div>
         </div>
       </main>
 

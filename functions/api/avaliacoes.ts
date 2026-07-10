@@ -1,4 +1,5 @@
 import { initDb, Env, jsonResponse } from './_db';
+import { EvaluationService } from './_services';
 
 export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   try {
@@ -184,6 +185,10 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
           "INSERT INTO respostas (avaliacao_id, item_id, resposta) VALUES (?, ?, ?)"
         ).bind(evalId, itemId, resVal).run();
       }
+    }
+
+    if (data.status) {
+      await EvaluationService.handleEvaluationFinalization(env.DB, String(evalId), data.status);
     }
 
     return jsonResponse({ success: true, id: String(evalId) });

@@ -1,5 +1,6 @@
 import { runInitialMigration } from './migrations/0001_initial_schema';
 import { runIncrementalMigration } from './migrations/0002_add_mission_config_columns';
+import { runRetentionMigration } from './migrations/0003_add_retention_columns';
 import { Logger } from './_logger';
 
 export interface Env {
@@ -35,8 +36,16 @@ export interface Env {
   ENABLE_AI_DASHBOARD?: string | boolean;
   ENABLE_COST_DASHBOARD?: string | boolean;
   ENABLE_CONFIDENCE_SCORE?: string | boolean;
+  ENABLE_EVIDENCE_PORTAL?: string | boolean;
+  ENABLE_EVIDENCE_AI?: string | boolean;
+  ENABLE_LGPD_RISK_SCAN?: string | boolean;
+  ENABLE_PROTECTED_PREVIEW?: string | boolean;
+  ENABLE_FACE_CONSISTENCY_CHECK?: string | boolean;
+  ENABLE_EVIDENCE_THUMBNAILS?: string | boolean;
+  ENABLE_EVIDENCE_RETENTION?: string | boolean;
   RETENCAO_EVIDENCIAS_DIAS?: string | number;
   RETENCAO_LOGS_DIAS?: string | number;
+  GEMINI_API_KEY?: string;
 }
 
 let dbInitialized = false;
@@ -49,6 +58,7 @@ export async function initDb(db: D1Database): Promise<void> {
   try {
     await runInitialMigration(db);
     await runIncrementalMigration(db);
+    await runRetentionMigration(db);
 
     // Ensure new tables are created for evolution
     await db.prepare(`
@@ -222,6 +232,18 @@ export async function initDb(db: D1Database): Promise<void> {
     `).run();
 
     await db.prepare(`
+      CREATE TABLE IF NOT EXISTS portal_lgpd_aceites (
+        id TEXT PRIMARY KEY,
+        avaliacao_id TEXT NOT NULL,
+        tecnico_login_hash TEXT NOT NULL,
+        versao_termo TEXT NOT NULL,
+        aceite_em TEXT NOT NULL,
+        documento_visualizado INTEGER DEFAULT 0,
+        documento_baixado INTEGER DEFAULT 0
+      )
+    `).run();
+
+    await db.prepare(`
       CREATE TABLE IF NOT EXISTS portais_evidencias (
         id TEXT PRIMARY KEY,
         avaliacao_id TEXT NOT NULL,
@@ -295,6 +317,17 @@ export async function initDb(db: D1Database): Promise<void> {
         repetida INTEGER DEFAULT 0,
         repetida_avaliacao_id TEXT,
         enviada_em TEXT NOT NULL,
+        retencao_ate TEXT,
+        arquivo_excluido INTEGER DEFAULT 0,
+        arquivo_excluido_em TEXT,
+        arquivo_exclusao_motivo TEXT,
+        r2_deleted INTEGER DEFAULT 0,
+        thumbnail_deleted INTEGER DEFAULT 0,
+        thumbnail_r2_key TEXT,
+        protected_preview_r2_key TEXT,
+        risco_lgpd INTEGER DEFAULT 0,
+        risco_lgpd_tipos_json TEXT,
+        preview_protegido_gerado INTEGER DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       )

@@ -40,6 +40,15 @@ export function getAppConfig(env: Env) {
     ENABLE_COST_DASHBOARD: getFeatureFlag(env, 'ENABLE_COST_DASHBOARD', true),
     ENABLE_CONFIDENCE_SCORE: getFeatureFlag(env, 'ENABLE_CONFIDENCE_SCORE', true),
 
+    // New requested feature flags (Requirement 25)
+    ENABLE_EVIDENCE_PORTAL: getFeatureFlag(env, 'ENABLE_EVIDENCE_PORTAL', true),
+    ENABLE_EVIDENCE_AI: getFeatureFlag(env, 'ENABLE_EVIDENCE_AI', false),
+    ENABLE_LGPD_RISK_SCAN: getFeatureFlag(env, 'ENABLE_LGPD_RISK_SCAN', false),
+    ENABLE_PROTECTED_PREVIEW: getFeatureFlag(env, 'ENABLE_PROTECTED_PREVIEW', false),
+    ENABLE_FACE_CONSISTENCY_CHECK: getFeatureFlag(env, 'ENABLE_FACE_CONSISTENCY_CHECK', false),
+    ENABLE_EVIDENCE_THUMBNAILS: getFeatureFlag(env, 'ENABLE_EVIDENCE_THUMBNAILS', true),
+    ENABLE_EVIDENCE_RETENTION: getFeatureFlag(env, 'ENABLE_EVIDENCE_RETENTION', true),
+
     // Limits
     MAX_ANALISES_IA_DIA: getNumericEnv(env, 'MAX_ANALISES_IA_DIA', 50),
     MAX_ANALISES_IA_MES: getNumericEnv(env, 'MAX_ANALISES_IA_MES', 1000),
@@ -48,7 +57,7 @@ export function getAppConfig(env: Env) {
     // Secrets
     IMAGE_SIGNING_SECRET: env.IMAGE_SIGNING_SECRET,
     LGPD_HASH_SALT: env.LGPD_HASH_SALT,
-    RETENCAO_EVIDENCIAS_DIAS: getNumericEnv(env, 'RETENCAO_EVIDENCIAS_DIAS', 180),
+    RETENCAO_EVIDENCIAS_DIAS: getNumericEnv(env, 'RETENCAO_EVIDENCIAS_DIAS', 30), // Default to 30 days
     RETENCAO_LOGS_DIAS: getNumericEnv(env, 'RETENCAO_LOGS_DIAS', 90),
   };
 }

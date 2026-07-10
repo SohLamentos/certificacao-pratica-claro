@@ -1,6 +1,26 @@
 import { initDb, Env, jsonResponse } from '../../_db';
 import { getAppConfig } from '../../_config';
 import { logEvent, LogLevel } from '../../_logger';
+import { GoogleGenAI, Type } from '@google/genai';
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+function generateBlurredSvg(base64Data: string, mimeType: string): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
+  <filter id="blurFilter">
+    <feGaussianBlur stdDeviation="20" />
+  </filter>
+  <image href="data:${mimeType};base64,${base64Data}" width="100%" height="100%" filter="url(#blurFilter)"/>
+</svg>`;
+}
 
 function scrubPersonalData(text: string): string {
   if (!text) return text;
@@ -358,7 +378,7 @@ Responda exclusivamente no formato JSON:
       promptText += `\nConsidere as correções e motivos de divergência listados acima para evitar cometer os mesmos equívocos na análise atual.`;
     }
 
-    // 8. Chamar Cloudflare Workers AI ou fallback para REVISÃO HUMANIZADA/MANUAL
+    // 8. Chamar Gemini API, Workers AI ou fallback para REVISÃO MANUAL
     let status_ia = 'PENDENTE_ANALISE';
     let resultado_ia = 'FALHA DE PROCESSAMENTO IA';
     let confianca_ia = 0.0;
@@ -370,39 +390,170 @@ Responda exclusivamente no formato JSON:
     let aiError: any = null;
     let ia_error_code: string | null = null;
 
+    let risco_lgpd = 'BAIXO';
+    let risco_lgpd_tipos_json = '[]';
+    let protected_preview_r2_key: string | null = null;
+    let preview_protegido_gerado = 0;
+
     const bucket = env.EVIDENCIAS_BUCKET;
-    if (env.AI && typeof env.AI.run === 'function' && bucket) {
+    if (bucket) {
       try {
         const object = await bucket.get(evidence.arquivo_key);
         if (object) {
           const imageBuffer = await object.arrayBuffer();
           const imageArray = Array.from(new Uint8Array(imageBuffer));
+          const mimeType = evidence.tipo_arquivo || "image/jpeg";
 
-          const modelUsed = "@cf/meta/llama-3.2-11b-vision-instruct";
-
-          // Resilient retry logic for manual trigger
-          try {
-            const response = await env.AI.run(modelUsed, {
-              prompt: promptText,
-              image: imageArray
+          // Use Gemini API if configured & key is available
+          if (config.ENABLE_EVIDENCE_AI && env.GEMINI_API_KEY) {
+            const aiClient = new GoogleGenAI({
+              apiKey: env.GEMINI_API_KEY,
+              httpOptions: {
+                headers: {
+                  'User-Agent': 'aistudio-build'
+                }
+              }
             });
-            aiResponseStr = typeof response === 'string' ? response : JSON.stringify(response);
-          } catch (firstErr: any) {
-            console.warn("First manual trigger AI call failed, retrying once in 1.5 seconds...", firstErr);
-            await new Promise(resolve => setTimeout(resolve, 1500));
+
+            const base64Data = arrayBufferToBase64(imageBuffer);
+            const imagePart = {
+              inlineData: {
+                mimeType: mimeType,
+                data: base64Data
+              }
+            };
+            const textPart = {
+              text: promptText
+            };
+
+            const responseSchema = {
+              type: Type.OBJECT,
+              properties: {
+                aprovado: {
+                  type: Type.BOOLEAN,
+                  description: "true se a foto atende a todos os critérios técnicos da etapa de checklist, false se possuir não-conformidade ou se for inválida técnica"
+                },
+                confianca: {
+                  type: Type.NUMBER,
+                  description: "Valor decimal de confiança na análise entre 0.0 e 1.0"
+                },
+                justificativa: {
+                  type: Type.STRING,
+                  description: "Sua explicação em português detalhada e profissional sobre os aspectos técnicos observados na foto"
+                },
+                risco_lgpd: {
+                  type: Type.STRING,
+                  description: "Grau de risco LGPD detectado na foto. Retorne 'ALTO' se houver rostos de pessoas visíveis, documentos de identificação legíveis (como CPF, RG, CNH), ou dados pessoais sensíveis expostos. Caso contrário, retorne 'BAIXO'."
+                },
+                risco_lgpd_tipos: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                  description: "Lista de riscos detectados. Valores possíveis: 'rosto', 'documento', 'cpf', 'dados_pessoais'."
+                }
+              },
+              required: ["aprovado", "confianca", "justificativa", "risco_lgpd"]
+            };
+
+            const modelUsed = "gemini-3.5-flash";
+
+            try {
+              const res = await aiClient.models.generateContent({
+                model: modelUsed,
+                contents: { parts: [imagePart, textPart] },
+                config: {
+                  responseMimeType: "application/json",
+                  responseSchema: responseSchema
+                }
+              });
+
+              aiResponseStr = res.text || "";
+
+              let parsed: any = null;
+              const jsonMatch = aiResponseStr.match(/\{[\s\S]*\}/);
+              if (jsonMatch) {
+                parsed = JSON.parse(jsonMatch[0]);
+              } else {
+                parsed = JSON.parse(aiResponseStr);
+              }
+
+              if (parsed && typeof parsed === 'object') {
+                resultado_ia = parsed.aprovado ? 'APROVADO' : 'REPROVADO';
+                status_ia = parsed.aprovado ? 'APROVADO_IA' : 'REPROVADO_IA';
+                confianca_ia = typeof parsed.confianca === 'number' ? parsed.confianca : 0.90;
+                justificativa_ia = parsed.justificativa || "Análise concluída via Gemini.";
+                ia_modelo = modelUsed;
+                ia_custo_estimado = 0.0005; // extremely low cost for Gemini 3.5 Flash
+
+                if (config.ENABLE_LGPD_RISK_SCAN) {
+                  risco_lgpd = parsed.risco_lgpd === 'ALTO' ? 'ALTO' : 'BAIXO';
+                  risco_lgpd_tipos_json = JSON.stringify(parsed.risco_lgpd_tipos || []);
+
+                  // Generate and upload blurred SVG if risk is ALTO and protected preview is enabled
+                  if (risco_lgpd === 'ALTO' && config.ENABLE_PROTECTED_PREVIEW) {
+                    const blurredSvg = generateBlurredSvg(base64Data, mimeType);
+                    const protectedKey = `${evidence.arquivo_key}_protected.svg`;
+                    
+                    const encoder = new TextEncoder();
+                    const svgBytes = encoder.encode(blurredSvg);
+                    
+                    await bucket.put(protectedKey, svgBytes, {
+                      httpMetadata: { contentType: "image/svg+xml" }
+                    });
+
+                    protected_preview_r2_key = protectedKey;
+                    preview_protegido_gerado = 1;
+                  }
+                }
+              } else {
+                throw new Error("Resposta inválida do Gemini API");
+              }
+
+            } catch (geminiErr: any) {
+              console.error("Gemini call failed, falling back to Workers AI LLaMA-vision:", geminiErr);
+              fallbackAtivo = true;
+            }
+
+          } else if (env.AI && typeof env.AI.run === 'function') {
+            // Fallback to Cloudflare Workers AI
+            const modelUsed = "@cf/meta/llama-3.2-11b-vision-instruct";
+
             try {
               const response = await env.AI.run(modelUsed, {
                 prompt: promptText,
                 image: imageArray
               });
               aiResponseStr = typeof response === 'string' ? response : JSON.stringify(response);
-            } catch (secErr: any) {
-              aiError = secErr;
-              ia_error_code = secErr.message || "TIMEOUT_NETWORK_ERROR";
+
+              let parsed: any = null;
+              const jsonMatch = aiResponseStr.match(/\{[\s\S]*\}/);
+              if (jsonMatch) {
+                parsed = JSON.parse(jsonMatch[0]);
+              } else {
+                parsed = JSON.parse(aiResponseStr);
+              }
+
+              if (parsed && typeof parsed === 'object') {
+                resultado_ia = parsed.aprovado ? 'APROVADO' : 'REPROVADO';
+                status_ia = parsed.aprovado ? 'APROVADO_IA' : 'REPROVADO_IA';
+                confianca_ia = typeof parsed.confianca === 'number' ? parsed.confianca : 0.90;
+                justificativa_ia = parsed.justificativa || "Análise concluída via Workers AI.";
+                ia_modelo = modelUsed;
+                ia_custo_estimado = isPaid ? 0.0050 : 0.0000;
+              } else {
+                throw new Error("Resposta inválida da API do Workers AI");
+              }
+
+            } catch (workersAiErr: any) {
+              console.error("Workers AI Call failed:", workersAiErr);
+              aiError = workersAiErr;
+              ia_error_code = workersAiErr.message || "WORKERS_AI_ERROR";
+              fallbackAtivo = true;
             }
+          } else {
+            fallbackAtivo = true;
           }
 
-          // Log versioning
+          // Log analytical results
           await env.DB.prepare(`
             INSERT INTO ia_analises_logs (
               evidencia_id, ia_model, ia_prompt_version, ia_requested_by, ia_requested_at,
@@ -410,42 +561,20 @@ Responda exclusivamente no formato JSON:
             ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)
           `).bind(
             evidencia_id,
-            modelUsed,
-            "1.1.0-manual",
+            ia_modelo,
+            config.ENABLE_EVIDENCE_AI && env.GEMINI_API_KEY ? "2.0.0-gemini" : "1.1.0-manual",
             finalUserId,
-            aiError ? 'FALHA' : 'SUCESSO',
+            fallbackAtivo ? 'FALHA' : 'SUCESSO',
             350,
             aiResponseStr || null,
             ia_error_code
           ).run();
 
-          if (aiError) {
-            throw aiError;
-          }
-
-          let parsed: any = null;
-          const jsonMatch = aiResponseStr.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            parsed = JSON.parse(jsonMatch[0]);
-          } else {
-            parsed = JSON.parse(aiResponseStr);
-          }
-
-          if (parsed && typeof parsed === 'object') {
-            resultado_ia = parsed.aprovado ? 'APROVADO' : 'REPROVADO';
-            status_ia = parsed.aprovado ? 'APROVADO_IA' : 'REPROVADO_IA';
-            confianca_ia = typeof parsed.confianca === 'number' ? parsed.confianca : 0.90;
-            justificativa_ia = parsed.justificativa || "Análise concluída via Workers AI.";
-            ia_modelo = modelUsed;
-            ia_custo_estimado = isPaid ? 0.0050 : 0.0000;
-          } else {
-            throw new Error("Resposta inválida da API do Workers AI");
-          }
         } else {
           throw new Error("Arquivo de evidência não localizado no bucket R2");
         }
       } catch (err: any) {
-        console.error("Workers AI Call failed:", err);
+        console.error("General analysis or object fetch error:", err);
         fallbackAtivo = true;
       }
     } else {
@@ -457,12 +586,13 @@ Responda exclusivamente no formato JSON:
       resultado_ia = 'FALHA DE PROCESSAMENTO IA';
       confianca_ia = 0.0;
       justificativa_ia = "Aviso: O serviço de análise de IA está indisponível ou falhou. Esta evidência foi direcionada para REVISÃO MANUAL obrigatória pelo CQ. Por favor, tome a decisão manualmente.";
-      ia_modelo = "Workers AI Offline";
+      ia_modelo = "AI Offline Fallback";
       ia_custo_estimado = 0.0;
     }
 
     const nowStr = new Date().toISOString();
     const confidenceScore = Math.round(confianca_ia * 100);
+    const riscoLgpdVal = risco_lgpd === 'ALTO' ? 1 : 0;
 
     // 8. Salvar resposta da IA no D1
     await env.DB.prepare(`
@@ -477,6 +607,10 @@ Responda exclusivamente no formato JSON:
           ia_custo_estimado = ?,
           ia_origem = 'MANUAL',
           ia_hash_arquivo = ?,
+          risco_lgpd = ?,
+          risco_lgpd_tipos_json = ?,
+          protected_preview_r2_key = ?,
+          preview_protegido_gerado = ?,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).bind(
@@ -489,8 +623,37 @@ Responda exclusivamente no formato JSON:
       ia_modelo,
       ia_custo_estimado,
       ia_hash_arquivo,
+      riscoLgpdVal,
+      risco_lgpd_tipos_json,
+      protected_preview_r2_key,
+      preview_protegido_gerado,
       evidencia_id
     ).run();
+
+    // Also update standard `evidencias` table if it exists
+    try {
+      await env.DB.prepare(`
+        UPDATE evidencias
+        SET status = ?,
+            risco_lgpd = ?,
+            risco_lgpd_tipos_json = ?,
+            protected_preview_r2_key = ?,
+            preview_protegido_gerado = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE image_hash = ? AND (avaliacao_id = ? OR portal_id IN (SELECT id FROM portais_evidencias WHERE avaliacao_id = ?))
+      `).bind(
+        resultado_ia,
+        riscoLgpdVal,
+        risco_lgpd_tipos_json,
+        protected_preview_r2_key,
+        preview_protegido_gerado,
+        ia_hash_arquivo,
+        evidence.certificacao_id,
+        evidence.certificacao_id
+      ).run();
+    } catch (mirrorErr) {
+      console.warn("Could not update standard evidencias table mirror:", mirrorErr);
+    }
 
     // 8b. Gravar histórico detalhado de decisões da IA (ia_decision_history)
     const historyId = crypto.randomUUID();
@@ -506,7 +669,7 @@ Responda exclusivamente no formato JSON:
         historyId,
         ia_hash_arquivo || '',
         ia_modelo || 'Nenhum',
-        "1.2.0-knowledge",
+        config.ENABLE_EVIDENCE_AI && env.GEMINI_API_KEY ? "2.0.0-gemini" : "1.2.0-knowledge",
         confidenceScore,
         resultado_ia || 'FALHA DE PROCESSAMENTO IA',
         processTime,
@@ -534,7 +697,8 @@ Responda exclusivamente no formato JSON:
         origem: 'MANUAL',
         regras_usadas: ruleIdsUsed,
         confidence_score: confidenceScore,
-        erro: fallbackAtivo ? "Serviço Workers AI indisponível ou falhou" : undefined
+        risco_lgpd: risco_lgpd,
+        erro: fallbackAtivo ? "Serviço AI indisponível ou falhou" : undefined
       }
     });
 

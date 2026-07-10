@@ -823,6 +823,15 @@ export default function CertificacaoIAView({
                       <div className="flex justify-between items-center text-[10px] text-slate-400 font-medium px-1">
                         <span>Enviado: {formatDateStr(activeEvidence.created_at)}</span>
                       </div>
+
+                      {/* LGPD & Retention Transparency Footer */}
+                      <div className="mt-4 bg-slate-50 border border-slate-200/60 rounded-2xl p-3.5 flex items-start gap-2.5 text-[10px] text-slate-500 leading-relaxed shadow-sm">
+                        <ShieldCheck size={16} className="text-emerald-600 shrink-0 mt-0.5" />
+                        <div>
+                          <strong className="text-slate-700 block font-semibold mb-0.5">Políticas de Privacidade &amp; LGPD (Auditoria Cega)</strong>
+                          Esta imagem técnica é protegida por anonimização e armazenada exclusivamente para fins de auditoria de qualidade. Por conformidade com a LGPD e políticas de privacidade, esta evidência será <strong>excluída permanentemente</strong> e de forma automática do servidor de arquivos após o prazo máximo de <strong>30 dias</strong> após o encerramento desta avaliação.
+                        </div>
+                      </div>
                     </div>
 
                     {/* Right Column: IA Analysis & CQ decisions */}
