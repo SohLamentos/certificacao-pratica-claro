@@ -111,9 +111,10 @@ export default function CQAvaliacoesDoDia({
     if (e) {
       e.stopPropagation();
     }
+    const itemNota = item.notaTeorica !== undefined && item.notaTeorica !== null && String(item.notaTeorica) !== "" ? item.notaTeorica : ((item as any).nota_teorica !== undefined && (item as any).nota_teorica !== null && String((item as any).nota_teorica) !== "" ? (item as any).nota_teorica : undefined);
     const noteVal = draftNotes[item.id] !== undefined 
       ? draftNotes[item.id] 
-      : (item.notaTeorica !== undefined ? String(item.notaTeorica).replace('.', ',') : '');
+      : (itemNota !== undefined ? String(itemNota).replace('.', ',') : '');
 
     const normalized = noteVal.trim().replace(',', '.');
     if (normalized === '') {
@@ -351,10 +352,11 @@ export default function CQAvaliacoesDoDia({
                 const statusDetails = getStatusDisplay(item.status);
                 const TechIcon = getTechIcon(item.tipoCertificacao);
                 const isFinalized = item.status === 'FINALIZADA' || item.status === 'Concluída' || item.status === 'APROVADA' || item.status === 'REPROVADA';
-                const hasTeorica = item.notaTeorica !== undefined;
-                const isTeoricaReprovado = hasTeorica && item.notaTeorica! < 7;
+                const nota = item.notaTeorica !== undefined && item.notaTeorica !== null && String(item.notaTeorica) !== "" ? Number(item.notaTeorica) : ((item as any).nota_teorica !== undefined && (item as any).nota_teorica !== null && String((item as any).nota_teorica) !== "" ? Number((item as any).nota_teorica) : null);
+                const hasTeorica = nota !== null && Number.isFinite(nota);
+                const isTeoricaReprovado = hasTeorica && nota < 7;
                 const finalResult = isTeoricaReprovado ? 'REPROVADO' : (item.status === 'REPROVADA' ? 'REPROVADO' : (item.resultado?.resultado || 'APROVADO'));
-                const formattedTeorica = hasTeorica ? String(item.notaTeorica).replace('.', ',') : null;
+                const formattedTeorica = hasTeorica ? String(nota).replace('.', ',') : null;
                 const formattedPratica = isTeoricaReprovado 
                   ? 'Não realizada' 
                   : (item.resultado ? item.resultado.nota.toFixed(1).replace('.', ',') : '10,0');
@@ -457,14 +459,14 @@ export default function CQAvaliacoesDoDia({
                             <label className="text-[8px] font-black text-slate-400 uppercase tracking-wider mb-0.5 leading-none flex items-center gap-1 flex-wrap">
                               <span>Nota Teórica</span>
                               {hasTeorica && (
-                                <span className="text-emerald-600 font-extrabold text-[8px] uppercase">✓ Salva ({String(item.notaTeorica).replace('.', ',')})</span>
+                                <span className="text-emerald-600 font-extrabold text-[8px] uppercase">✓ Salva ({String(nota).replace('.', ',')})</span>
                               )}
                             </label>
                             <div className="flex items-center gap-1.5">
                               <input
                                 type="text"
                                 placeholder="0,0"
-                                value={draftNotes[item.id] !== undefined ? draftNotes[item.id] : (item.notaTeorica !== undefined ? String(item.notaTeorica).replace('.', ',') : '')}
+                                value={draftNotes[item.id] !== undefined ? draftNotes[item.id] : (nota !== null ? String(nota).replace('.', ',') : '')}
                                 onChange={(e) => handleNoteChange(item.id, e.target.value)}
                                 className="w-12 h-7 bg-white rounded border border-slate-200 text-center text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-red-500/20 focus:border-claro-red"
                               />

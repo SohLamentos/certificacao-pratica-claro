@@ -209,39 +209,43 @@ export default function DetailModal({ evaluation, onClose, onEdit }: DetailModal
           </div>
 
           {/* Universal Grades Summary Section */}
-          {evaluation.notaTeorica !== undefined && (
-            <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4.5 space-y-3 animate-fade-in">
-              <span className="block text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">
-                Resumo do Rendimento
-              </span>
-              <div className="grid grid-cols-3 gap-2.5 text-center">
-                <div className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm flex flex-col justify-center">
-                  <span className="block text-[9px] text-slate-400 uppercase font-black">Nota Teórica</span>
-                  <strong className="text-base font-black text-slate-800">
-                    {String(evaluation.notaTeorica).replace('.', ',')}
-                  </strong>
-                </div>
-                <div className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm flex flex-col justify-center">
-                  <span className="block text-[9px] text-slate-400 uppercase font-black">Nota Prática</span>
-                  <strong className="text-base font-black text-slate-800">
-                    {evaluation.resultado ? evaluation.resultado.nota.toFixed(1).replace('.', ',') : '10,0'}
-                  </strong>
-                </div>
-                <div className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm flex flex-col justify-center">
-                  <span className="block text-[9px] text-slate-400 uppercase font-black">Resultado Final</span>
-                  <strong className={`text-[10px] font-black uppercase leading-tight block mt-1 py-1 rounded ${
-                    (evaluation.resultado?.resultado || 'APROVADO') === 'APROVADO' && evaluation.notaTeorica >= 7
-                      ? 'text-emerald-600 bg-emerald-50'
-                      : 'text-red-600 bg-red-50'
-                  }`}>
-                    {(evaluation.resultado?.resultado || 'APROVADO') === 'APROVADO' && evaluation.notaTeorica >= 7
-                      ? 'APROVADO'
-                      : 'REPROVADO'}
-                  </strong>
+          {(evaluation.notaTeorica !== undefined && evaluation.notaTeorica !== null || (evaluation as any).nota_teorica !== undefined && (evaluation as any).nota_teorica !== null) && (() => {
+            const notaVal = evaluation.notaTeorica !== undefined && evaluation.notaTeorica !== null && String(evaluation.notaTeorica) !== "" ? Number(evaluation.notaTeorica) : ((evaluation as any).nota_teorica !== undefined && (evaluation as any).nota_teorica !== null && String((evaluation as any).nota_teorica) !== "" ? Number((evaluation as any).nota_teorica) : null);
+            if (notaVal === null || !Number.isFinite(notaVal)) return null;
+            return (
+              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4.5 space-y-3 animate-fade-in">
+                <span className="block text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">
+                  Resumo do Rendimento
+                </span>
+                <div className="grid grid-cols-3 gap-2.5 text-center">
+                  <div className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm flex flex-col justify-center">
+                    <span className="block text-[9px] text-slate-400 uppercase font-black">Nota Teórica</span>
+                    <strong className="text-base font-black text-slate-800">
+                      {String(notaVal).replace('.', ',')}
+                    </strong>
+                  </div>
+                  <div className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm flex flex-col justify-center">
+                    <span className="block text-[9px] text-slate-400 uppercase font-black">Nota Prática</span>
+                    <strong className="text-base font-black text-slate-800">
+                      {evaluation.resultado ? evaluation.resultado.nota.toFixed(1).replace('.', ',') : '10,0'}
+                    </strong>
+                  </div>
+                  <div className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm flex flex-col justify-center">
+                    <span className="block text-[9px] text-slate-400 uppercase font-black">Resultado Final</span>
+                    <strong className={`text-[10px] font-black uppercase leading-tight block mt-1 py-1 rounded ${
+                      (evaluation.resultado?.resultado || 'APROVADO') === 'APROVADO' && notaVal >= 7
+                        ? 'text-emerald-600 bg-emerald-50'
+                        : 'text-red-600 bg-red-50'
+                    }`}>
+                      {(evaluation.resultado?.resultado || 'APROVADO') === 'APROVADO' && notaVal >= 7
+                        ? 'APROVADO'
+                        : 'REPROVADO'}
+                    </strong>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Checklist Evaluation Results (GPON or HFC specific layout) */}
           {isActiveTech ? (

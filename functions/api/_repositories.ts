@@ -44,9 +44,9 @@ export class EvaluationRepository {
       data.status,
       data.resultado ? JSON.stringify(data.resultado) : null,
       data.observacao || '',
-      data.nota_teorica !== undefined && data.nota_teorica !== null ? Number(data.nota_teorica) : null,
-      data.nota_pratica !== undefined && data.nota_pratica !== null ? Number(data.nota_pratica) : null,
-      data.modo_certificacao || 'TRADICIONAL'
+      data.nota_teorica !== undefined && data.nota_teorica !== null ? Number(data.nota_teorica) : (data.notaTeorica !== undefined && data.notaTeorica !== null ? Number(data.notaTeorica) : null),
+      data.nota_pratica !== undefined && data.nota_pratica !== null ? Number(data.nota_pratica) : (data.notaPratica !== undefined && data.notaPratica !== null ? Number(data.notaPratica) : null),
+      data.modo_certificacao || data.modoCertificacao || 'TRADICIONAL'
     ).run();
     Logger.info(`Avaliação criada: ${data.id}`);
   }
@@ -72,9 +72,9 @@ export class EvaluationRepository {
       data.status,
       data.resultado ? JSON.stringify(data.resultado) : null,
       data.observacao || '',
-      data.nota_teorica !== undefined && data.nota_teorica !== null ? Number(data.nota_teorica) : null,
-      data.nota_pratica !== undefined && data.nota_pratica !== null ? Number(data.nota_pratica) : null,
-      data.modo_certificacao || 'TRADICIONAL',
+      data.nota_teorica !== undefined && data.nota_teorica !== null ? Number(data.nota_teorica) : (data.notaTeorica !== undefined && data.notaTeorica !== null ? Number(data.notaTeorica) : null),
+      data.nota_pratica !== undefined && data.nota_pratica !== null ? Number(data.nota_pratica) : (data.notaPratica !== undefined && data.notaPratica !== null ? Number(data.notaPratica) : null),
+      data.modo_certificacao || data.modoCertificacao || 'TRADICIONAL',
       id
     ).run();
     Logger.info(`Avaliação atualizada: ${id}`);

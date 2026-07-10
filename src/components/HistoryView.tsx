@@ -203,10 +203,11 @@ export default function HistoryView({
                   : (item.tipoCertificacao === 'GPON Capacitação' ? Cpu : Wifi);
 
                 const isFinalized = item.status === 'Concluída' || item.status === 'FINALIZADA' || item.status === 'APROVADA' || item.status === 'REPROVADA';
-                const hasTeorica = item.notaTeorica !== undefined;
-                const isTeoricaReprovado = hasTeorica && item.notaTeorica! < 7;
+                const nota = item.notaTeorica !== undefined && item.notaTeorica !== null && String(item.notaTeorica) !== "" ? Number(item.notaTeorica) : ((item as any).nota_teorica !== undefined && (item as any).nota_teorica !== null && String((item as any).nota_teorica) !== "" ? Number((item as any).nota_teorica) : null);
+                const hasTeorica = nota !== null && Number.isFinite(nota);
+                const isTeoricaReprovado = hasTeorica && nota < 7;
                 const finalResult = isTeoricaReprovado ? 'REPROVADO' : (item.status === 'REPROVADA' ? 'REPROVADO' : (item.resultado?.resultado || 'APROVADO'));
-                const formattedTeorica = hasTeorica ? String(item.notaTeorica).replace('.', ',') : null;
+                const formattedTeorica = hasTeorica ? String(nota).replace('.', ',') : null;
                 const formattedPratica = isTeoricaReprovado 
                   ? 'Não realizada' 
                   : (item.resultado ? item.resultado.nota.toFixed(1).replace('.', ',') : '10,0');

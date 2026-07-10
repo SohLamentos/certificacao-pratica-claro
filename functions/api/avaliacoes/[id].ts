@@ -41,6 +41,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         console.error("Error parsing resultado", e);
       }
 
+      const nota = updatedRow.nota_teorica !== null ? Number(updatedRow.nota_teorica) : null;
+      const praticaLiberada = nota !== null && Number.isFinite(nota) && nota >= 7;
+
       const mapped = {
         id: String(updatedRow.id),
         nomeTecnico: updatedRow.nome_tecnico,
@@ -58,11 +61,12 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         notaTeorica: updatedRow.nota_teorica !== null ? Number(updatedRow.nota_teorica) : undefined,
         notaPratica: updatedRow.nota_pratica !== null ? Number(updatedRow.nota_pratica) : undefined,
         modoCertificacao: updatedRow.modo_certificacao || 'TRADICIONAL',
+        praticaLiberada,
         createdAt: updatedRow.created_at,
         updatedAt: updatedRow.updated_at
       };
 
-      return jsonResponse({ success: true, evaluation: mapped });
+      return jsonResponse({ success: true, data: mapped, evaluation: mapped });
     }
 
     if (request.method === 'DELETE') {

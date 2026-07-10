@@ -253,9 +253,10 @@ export default function FormView({ onSave, onCancel, initialData, profile }: For
       setObservacao(initialData.observacao || '');
       setModoCertificacao((initialData as any).modoCertificacao || 'TRADICIONAL');
       
-      if (initialData.notaTeorica !== undefined) {
-        setNotaTeoricaInput(String(initialData.notaTeorica).replace('.', ','));
-        setActiveCqView(initialData.notaTeorica < 7 ? 'reprovadoTeorica' : 'checklist');
+      const initialNotaVal = initialData.notaTeorica !== undefined && initialData.notaTeorica !== null && String(initialData.notaTeorica) !== "" ? Number(initialData.notaTeorica) : ((initialData as any).nota_teorica !== undefined && (initialData as any).nota_teorica !== null && String((initialData as any).nota_teorica) !== "" ? Number((initialData as any).nota_teorica) : null);
+      if (initialNotaVal !== null && Number.isFinite(initialNotaVal)) {
+        setNotaTeoricaInput(String(initialNotaVal).replace('.', ','));
+        setActiveCqView(initialNotaVal < 7 ? 'reprovadoTeorica' : 'checklist');
       } else {
         setNotaTeoricaInput('');
         setActiveCqView('teorica');
@@ -814,7 +815,7 @@ export default function FormView({ onSave, onCancel, initialData, profile }: For
                 data,
                 tipoCertificacao: tipoCertificacao as CertificacaoType,
                 observacao: observacao.trim(),
-                notaTeorica: initialData?.notaTeorica
+                notaTeorica: initialData?.notaTeorica !== undefined ? initialData.notaTeorica : (initialData as any)?.nota_teorica
               }, 'AGENDADA', {});
             }
           }}
