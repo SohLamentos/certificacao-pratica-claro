@@ -20,8 +20,11 @@ import {
   Menu,
   X,
   RefreshCw,
-  Cpu
+  Cpu,
+  Loader2
 } from 'lucide-react';
+
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 import Header from './components/Header';
 import HomeView from './components/HomeView';
@@ -117,7 +120,7 @@ interface ToastState {
   type: 'success' | 'info' | 'error';
 }
 
-export default function App() {
+export function AppContent() {
   const [currentProfile, setCurrentProfile] = useState<'analista' | 'cq' | null>(() => {
     const saved = localStorage.getItem('claro_cq_profile');
     return (saved as 'analista' | 'cq' | null) || null;
@@ -153,6 +156,39 @@ export default function App() {
   const [isAuthReady, setIsAuthReady] = useState(() => {
     return localStorage.getItem('claro_cq_auth_enabled') === 'false';
   });
+
+  // Technician Portal specific states
+  const [technicianToken, setTechnicianToken] = useState<string | null>(null);
+  const [isPortalTecnico, setIsPortalTecnico] = useState<boolean>(false);
+
+  // loadingProfile state
+  const [loadingProfile, setLoadingProfile] = useState<boolean>(false);
+
+  useEffect(() => {
+    // Detect technician portal route from pathname or hash
+    const path = window.location.pathname;
+    const hash = window.location.hash;
+    
+    let tokenMatch: string | null = null;
+    
+    if (path.includes('/evidencias/')) {
+      const parts = path.split('/evidencias/');
+      if (parts[1]) {
+        tokenMatch = parts[1].split('/')[0];
+      }
+    } else if (hash.includes('evidencias/')) {
+      const parts = hash.split('evidencias/');
+      if (parts[1]) {
+        tokenMatch = parts[1].split('/')[0];
+      }
+    }
+    
+    if (tokenMatch) {
+      setTechnicianToken(tokenMatch);
+    } else if (path.includes('/portal-tecnico') || hash.includes('portal-tecnico')) {
+      setIsPortalTecnico(true);
+    }
+  }, []);
 
   const triggerServerLogin = useCallback(async (userId: string, profile: 'analista' | 'cq') => {
     try {
@@ -234,22 +270,39 @@ export default function App() {
   };
 
   const handleSelectProfile = async (profile: 'analista' | 'cq' | null) => {
-    setCurrentProfile(profile);
-    if (profile) {
-      localStorage.setItem('claro_cq_profile', profile);
-      if (profile === 'cq' && selectedCQ?.id) {
-        await triggerServerLogin(selectedCQ.id, 'cq');
-      } else if (profile === 'analista' && selectedAnalista?.id) {
-        await triggerServerLogin(selectedAnalista.id, 'analista');
+    console.log("Perfil antigo", currentProfile);
+    console.log("Carregando novo perfil", profile);
+    
+    setLoadingProfile(true);
+
+    try {
+      // Simulate profile data loading transition
+      await new Promise(resolve => setTimeout(resolve, 350));
+
+      setCurrentProfile(profile);
+      if (profile) {
+        localStorage.setItem('claro_cq_profile', profile);
+        if (profile === 'cq' && selectedCQ?.id) {
+          await triggerServerLogin(selectedCQ.id, 'cq');
+        } else if (profile === 'analista' && selectedAnalista?.id) {
+          await triggerServerLogin(selectedAnalista.id, 'analista');
+        }
+      } else {
+        localStorage.removeItem('claro_cq_profile');
+        localStorage.removeItem('claro_cq_auth_token');
       }
-    } else {
-      localStorage.removeItem('claro_cq_profile');
-      localStorage.removeItem('claro_cq_auth_token');
+      
+      setCurrentView('home');
+      setEditingEvaluation(null);
+      setIsMobileMenuOpen(false);
+      setIsPerformingCert(false);
+
+      console.log("Perfil carregado", profile);
+    } catch (error) {
+      console.error("Erro ao carregar novo perfil:", error);
+    } finally {
+      setLoadingProfile(false);
     }
-    setCurrentView('home');
-    setEditingEvaluation(null);
-    setIsMobileMenuOpen(false);
-    setIsPerformingCert(false);
   };
   const [evaluationsState, setEvaluationsState] = useState<Avaliacao[]>([]);
   const evaluations = Array.isArray(evaluationsState) ? evaluationsState : [];
@@ -404,7 +457,7 @@ export default function App() {
       }, 3500);
       return () => clearTimeout(timer);
     }
-  }, [toast]);
+  }, [toast?.message]);
 
   // Navigate back to home and reset active edits
   const handleGoHome = () => {
@@ -602,6 +655,16 @@ export default function App() {
 
   // Find the technician name & certification for the delete confirmation modal
   const deletingItem = evaluations.find((item) => item.id === deletingId);
+
+  // If profile is loading, render the transition spinner
+  if (loadingProfile) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-claro-dark antialiased">
+        <Loader2 className="w-12 h-12 text-claro-red animate-spin mb-4" />
+        <p className="text-sm font-bold text-slate-600">Carregando perfil...</p>
+      </div>
+    );
+  }
 
   // If no profile is selected, render the selection gate
   if (currentProfile === null) {
@@ -821,35 +884,6 @@ export default function App() {
   };
 
   const hasSidebar = currentProfile === 'analista' || (currentProfile === 'cq' && selectedCQ !== null);
-
-  const [technicianToken, setTechnicianToken] = useState<string | null>(null);
-  const [isPortalTecnico, setIsPortalTecnico] = useState<boolean>(false);
-
-  useEffect(() => {
-    // Detect technician portal route from pathname or hash
-    const path = window.location.pathname;
-    const hash = window.location.hash;
-    
-    let tokenMatch: string | null = null;
-    
-    if (path.includes('/evidencias/')) {
-      const parts = path.split('/evidencias/');
-      if (parts[1]) {
-        tokenMatch = parts[1].split('/')[0];
-      }
-    } else if (hash.includes('evidencias/')) {
-      const parts = hash.split('evidencias/');
-      if (parts[1]) {
-        tokenMatch = parts[1].split('/')[0];
-      }
-    }
-    
-    if (tokenMatch) {
-      setTechnicianToken(tokenMatch);
-    } else if (path.includes('/portal-tecnico') || hash.includes('portal-tecnico')) {
-      setIsPortalTecnico(true);
-    }
-  }, []);
 
   if (technicianToken) {
     return <PortalTecnico token={technicianToken} />;
@@ -1252,5 +1286,13 @@ export default function App() {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <AppContent />
+    </ErrorBoundary>
   );
 }

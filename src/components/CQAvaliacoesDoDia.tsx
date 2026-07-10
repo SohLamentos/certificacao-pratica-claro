@@ -174,6 +174,7 @@ export default function CQAvaliacoesDoDia({
 
   // Filter evaluations for the selected date and selected CQ with profile validation
   const filtered = React.useMemo(() => {
+    if (!selectedCQ) return [];
     const list = evaluations.filter(e => {
       const isDateMatch = e.data === selectedDate;
       
@@ -203,6 +204,10 @@ export default function CQAvaliacoesDoDia({
     console.log('[Atualizar CQ] filtradas', list);
     return list;
   }, [evaluations, selectedDate, selectedCQ, cqs]);
+
+  if (!selectedCQ) {
+    return null;
+  }
 
   // Status mapping to Brazilian Portuguese labels and colors
   const getStatusDisplay = (status: AvaliacaoStatus) => {
