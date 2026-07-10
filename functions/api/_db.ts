@@ -207,6 +207,186 @@ export async function initDb(db: D1Database): Promise<void> {
       console.error("Error seeding knowledge_base:", err);
     }
 
+    // Portal de Evidências Antecipadas Tables Creation
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS portais_evidencias (
+        id TEXT PRIMARY KEY,
+        avaliacao_id TEXT NOT NULL,
+        token_hash TEXT NOT NULL,
+        status TEXT NOT NULL,
+        liberado_em TEXT,
+        expira_em TEXT,
+        encerrado_em TEXT,
+        encerrado_motivo TEXT,
+        reaberto_em TEXT,
+        reaberto_por TEXT,
+        ultimo_acesso_em TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `).run();
+
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS missoes_evidencias (
+        id TEXT PRIMARY KEY,
+        certificacao_id INTEGER NOT NULL,
+        nome TEXT NOT NULL,
+        descricao TEXT,
+        orientacao_foto TEXT,
+        grupo_evidencia TEXT,
+        quantidade_minima INTEGER DEFAULT 1,
+        quantidade_maxima INTEGER DEFAULT 1,
+        obrigatoria INTEGER DEFAULT 1,
+        ordem INTEGER NOT NULL,
+        ativa INTEGER DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `).run();
+
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS missao_evidencia_itens (
+        missao_id TEXT NOT NULL,
+        item_id INTEGER NOT NULL,
+        tipo_validacao TEXT DEFAULT 'IA_VISION',
+        peso_ia REAL DEFAULT 1.0,
+        confirmacao_cq_obrigatoria INTEGER DEFAULT 1,
+        ativo INTEGER DEFAULT 1,
+        PRIMARY KEY (missao_id, item_id)
+      )
+    `).run();
+
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS evidencias (
+        id TEXT PRIMARY KEY,
+        portal_id TEXT NOT NULL,
+        avaliacao_id TEXT NOT NULL,
+        missao_id TEXT NOT NULL,
+        tecnico_login_hash TEXT,
+        r2_key TEXT NOT NULL,
+        image_hash TEXT NOT NULL,
+        image_signature TEXT,
+        mime_type TEXT,
+        tamanho_original INTEGER,
+        tamanho_final INTEGER,
+        largura INTEGER,
+        altura INTEGER,
+        status TEXT NOT NULL,
+        repetida INTEGER DEFAULT 0,
+        repetida_avaliacao_id TEXT,
+        enviada_em TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `).run();
+
+    // Create Indexes for Evidence Portal
+    await db.prepare("CREATE INDEX IF NOT EXISTS idx_portais_avaliacao ON portais_evidencias(avaliacao_id)").run();
+    await db.prepare("CREATE INDEX IF NOT EXISTS idx_portais_token ON portais_evidencias(token_hash)").run();
+    await db.prepare("CREATE INDEX IF NOT EXISTS idx_portais_status ON portais_evidencias(status)").run();
+    await db.prepare("CREATE INDEX IF NOT EXISTS idx_evidencias_hash ON evidencias(image_hash)").run();
+    await db.prepare("CREATE INDEX IF NOT EXISTS idx_evidencias_portal ON evidencias(portal_id)").run();
+    await db.prepare("CREATE INDEX IF NOT EXISTS idx_evidencias_missao ON evidencias(missao_id)").run();
+    await db.prepare("CREATE INDEX IF NOT EXISTS idx_missoes_cert ON missoes_evidencias(certificacao_id)").run();
+
+    // Seed default missions and item mapping if empty
+    try {
+      const missionsCheck = await db.prepare("SELECT COUNT(*) as cnt FROM missoes_evidencias").first() as any;
+      if (missionsCheck && missionsCheck.cnt === 0) {
+        Logger.info("Seeding default Evidence Missions and mapping items...");
+        const now = new Date().toISOString();
+
+        // Let's retrieve existing certifications and items
+        const certsRows = await db.prepare("SELECT id, nome FROM certificacoes").all();
+        const certs = certsRows.results || [];
+
+        const itemsRows = await db.prepare("SELECT id, certificacao_id, descricao FROM itens").all();
+        const items = itemsRows.results || [];
+
+        for (const cert of certs) {
+          const certId = cert.id;
+
+          // Standard missions we will create:
+          const defaultMissions = [
+            {
+              id: `missao_ident_${certId}`,
+              nome: "Identificação do Técnico",
+              descricao: "Apresentação e identificação com crachá e veículo da empresa",
+              orientacao: "Tire uma foto nítida do seu crachá de identificação funcional posicionado ao lado do veículo da Claro ou crachá em primeiro plano.",
+              grupo: "Processos",
+              ordem: 1,
+              obrigatoria: 1,
+              keywords: ["se apresentou", "status no pda", "identificou", "identificação"]
+            },
+            {
+              id: `missao_seg_${certId}`,
+              nome: "Segurança de Altura & Poste",
+              descricao: "Garantia de ancoragem de escada e cintagem corretas",
+              orientacao: "Tire uma foto da escada devidamente travada e amarrada ao poste, mostrando o cinto/talabarte de segurança conectado à linha de vida ou corda de amarração.",
+              grupo: "Instalação Física",
+              ordem: 2,
+              obrigatoria: 1,
+              keywords: ["cintagem", "cinto", "botão escada", "apr", "altura"]
+            },
+            {
+              id: `missao_con_${certId}`,
+              nome: "Conectorização Técnica",
+              descricao: "Evidência em macrofoco da montagem dos conectores",
+              orientacao: "Tire uma foto nítida e bem próxima (macrofoco) do conector finalizado (óptico mecânico ou coaxial de compressão) na NAP, MDU ou splitter.",
+              grupo: "Instalação Física",
+              ordem: 3,
+              obrigatoria: 1,
+              keywords: ["conector", "conectores", "confecção"]
+            },
+            {
+              id: `missao_sin_${certId}`,
+              nome: "Níveis de Sinal & Medição",
+              descricao: "Exibição dos níveis medidos no equipamento/instrumento",
+              orientacao: "Tire uma foto da tela do seu Power Meter (para GPON) ou do Field/Sinal (para HFC) ou do aplicativo de medição mostrando os níveis adequados.",
+              grupo: "Sinal & Rede",
+              ordem: 4,
+              obrigatoria: 1,
+              keywords: ["medição de sinal", "sinal", "tx", "rx", "snr", "power meter"]
+            },
+            {
+              id: `missao_org_${certId}`,
+              nome: "Organização & Acabamento Interno",
+              descricao: "Acomodação dos cabos e fixação do equipamento",
+              orientacao: "Tire uma foto que mostre o posicionamento final da ONT, decoder ou eMTA, bem como o acabamento do cabo (cabo invisível, fixação na parede e acomodação limpa).",
+              grupo: "Instalação Física",
+              ordem: 5,
+              obrigatoria: 1,
+              keywords: ["acabamento", "organização", "passagem", "acomodação", "pto", "ont", "furo", "fita"]
+            }
+          ];
+
+          for (const m of defaultMissions) {
+            // Insert mission
+            await db.prepare(`
+              INSERT INTO missoes_evidencias (id, certificacao_id, nome, descricao, orientacao_foto, grupo_evidencia, quantidade_minima, quantidade_maxima, obrigatoria, ordem, ativa, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?, ?, 1, ?, ?)
+            `).bind(m.id, certId, m.nome, m.descricao, m.orientacao, m.grupo, m.obrigatoria, m.ordem, now, now).run();
+
+            // Find matching checklist items by keywords to map to this mission
+            const matchedItems = items.filter((item: any) => {
+              if (Number(item.certificacao_id) !== Number(certId)) return false;
+              const descLower = String(item.descricao).toLowerCase();
+              return m.keywords.some(kw => descLower.includes(kw));
+            });
+
+            for (const item of matchedItems) {
+              await db.prepare(`
+                INSERT INTO missao_evidencia_itens (missao_id, item_id, tipo_validacao, peso_ia, confirmacao_cq_obrigatoria, ativo)
+                VALUES (?, ?, 'IA_VISION', 1.0, 1, 1)
+              `).bind(m.id, item.id).run();
+            }
+          }
+        }
+      }
+    } catch (errSeed) {
+      console.error("Error seeding Evidence Portal default data:", errSeed);
+    }
+
     dbInitialized = true;
   } catch (error) {
     Logger.error("Falha fatal ao inicializar banco de dados D1:", error);

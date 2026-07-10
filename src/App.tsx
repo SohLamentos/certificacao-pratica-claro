@@ -36,6 +36,8 @@ import AnalistaIdentificationGate from './components/AnalistaIdentificationGate'
 import SettingsView from './components/SettingsView';
 import CertificacaoIAView from './components/CertificacaoIAView';
 import IARulesConfig from './components/IARulesConfig';
+import PortalTecnico from './components/PortalTecnico';
+import PortalAcompanhamento from './components/PortalAcompanhamento';
 import { Avaliacao, CertificacaoType, AvaliacaoStatus, ChecklistValue, CQ } from './types';
 import { getDynamicChecklistItems, calcularResultadoDinamico, setCachedCertificacoes, setCachedChecklistItems } from './data/dynamicChecklist';
 import { apiFetch } from './lib/api';
@@ -713,6 +715,7 @@ export default function App() {
     { id: 'home', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'nova', label: 'Agendar Avaliação', icon: CalendarPlus },
     { id: 'realizar', label: 'Realizar Certificação', icon: ClipboardCheck },
+    { id: 'acompanhamento_portal', label: 'Acompanhamento Portais', icon: Smartphone },
     { id: 'historico', label: 'Histórico Geral', icon: History },
     { id: 'cqs', label: 'Gerenciar Avaliadores', icon: Users },
     { id: 'ia_config', label: 'Configuração da IA', icon: Cpu },
@@ -722,7 +725,10 @@ export default function App() {
   const renderSidebarContent = (isMobile: boolean = false) => {
     const isCQ = currentProfile === 'cq';
     const items = isCQ 
-      ? [{ id: 'home', label: 'Avaliações do Dia', icon: LayoutDashboard }]
+      ? [
+          { id: 'home', label: 'Avaliações do Dia', icon: LayoutDashboard },
+          { id: 'acompanhamento_portal', label: 'Acompanhamento Portais', icon: Smartphone }
+        ]
       : sidebarItems;
 
     return (
@@ -815,6 +821,43 @@ export default function App() {
   };
 
   const hasSidebar = currentProfile === 'analista' || (currentProfile === 'cq' && selectedCQ !== null);
+
+  const [technicianToken, setTechnicianToken] = useState<string | null>(null);
+  const [isPortalTecnico, setIsPortalTecnico] = useState<boolean>(false);
+
+  useEffect(() => {
+    // Detect technician portal route from pathname or hash
+    const path = window.location.pathname;
+    const hash = window.location.hash;
+    
+    let tokenMatch: string | null = null;
+    
+    if (path.includes('/evidencias/')) {
+      const parts = path.split('/evidencias/');
+      if (parts[1]) {
+        tokenMatch = parts[1].split('/')[0];
+      }
+    } else if (hash.includes('evidencias/')) {
+      const parts = hash.split('evidencias/');
+      if (parts[1]) {
+        tokenMatch = parts[1].split('/')[0];
+      }
+    }
+    
+    if (tokenMatch) {
+      setTechnicianToken(tokenMatch);
+    } else if (path.includes('/portal-tecnico') || hash.includes('portal-tecnico')) {
+      setIsPortalTecnico(true);
+    }
+  }, []);
+
+  if (technicianToken) {
+    return <PortalTecnico token={technicianToken} />;
+  }
+
+  if (isPortalTecnico) {
+    return <PortalTecnico />;
+  }
 
   return (
     <div className={`min-h-screen bg-slate-50 text-claro-dark antialiased ${hasSidebar ? 'flex flex-col md:flex-row' : 'flex flex-col'}`}>
@@ -997,6 +1040,18 @@ export default function App() {
                 transition={{ duration: 0.25 }}
               >
                 <IARulesConfig />
+              </motion.div>
+            )}
+
+            {currentView === 'acompanhamento_portal' && (
+              <motion.div
+                key="acompanhamento_portal"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+                transition={{ duration: 0.25 }}
+              >
+                <PortalAcompanhamento />
               </motion.div>
             )}
 

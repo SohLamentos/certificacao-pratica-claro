@@ -22,7 +22,10 @@ import {
   FileText,
   AlertCircle,
   Loader2,
-  ShieldAlert
+  ShieldAlert,
+  Smartphone,
+  Copy,
+  ExternalLink
 } from 'lucide-react';
 import { Avaliacao, AvaliacaoStatus } from '../types';
 import { apiFetch } from '../lib/api';
@@ -107,6 +110,59 @@ export default function CertificacaoIAView({
   // Human feedback learning states
   const [usarFeedback, setUsarFeedback] = useState(true);
   const [motivoDivergencia, setMotivoDivergencia] = useState('');
+
+  // Portal de Evidências do Técnico states
+  const [portalData, setPortalData] = useState<any>(null);
+  const [loadingPortal, setLoadingPortal] = useState(false);
+  const [updatingPortal, setUpdatingPortal] = useState(false);
+
+  const fetchPortalDetails = async () => {
+    setLoadingPortal(true);
+    try {
+      const res = await apiFetch(`/api/evidencias/portal?avaliacaoId=${evaluation.id}`);
+      if (res.ok) {
+        const data = await res.json() as any;
+        if (data.success) {
+          setPortalData(data.portal);
+        }
+      }
+    } catch (err) {
+      console.error("Error fetching portal details:", err);
+    } finally {
+      setLoadingPortal(false);
+    }
+  };
+
+  const handlePortalAction = async (action: 'reopen' | 'close') => {
+    setUpdatingPortal(true);
+    try {
+      const res = await apiFetch('/api/evidencias/portal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          avaliacaoId: evaluation.id,
+          action,
+          expiraEmDays: 3,
+          reabertoPor: localStorage.getItem('claro_cq_selecionado') ? JSON.parse(localStorage.getItem('claro_cq_selecionado') || '{}').nome : 'CQ/Analista'
+        })
+      });
+      if (res.ok) {
+        const data = await res.json() as any;
+        if (data.success) {
+          showToast(action === 'reopen' ? 'Portal reaberto com sucesso!' : 'Portal encerrado com sucesso!', 'success');
+          await fetchPortalDetails();
+        } else {
+          showToast(data.error || 'Erro na alteração do portal', 'error');
+        }
+      } else {
+        showToast('Falha na requisição ao servidor', 'error');
+      }
+    } catch (err) {
+      showToast('Erro ao atualizar portal', 'error');
+    } finally {
+      setUpdatingPortal(false);
+    }
+  };
 
   const handleAnalyzeIA = async () => {
     if (!activeEvidence || !activeEvidence.id) return;
@@ -215,6 +271,7 @@ export default function CertificacaoIAView({
   useEffect(() => {
     setLoading(true);
     fetchEvidenciasData();
+    fetchPortalDetails();
   }, [evaluation.id]);
 
   // Handle active stage change to prefill current CQ decisions
@@ -489,6 +546,109 @@ export default function CertificacaoIAView({
                 </div>
               </div>
             </div>
+          </div>
+
+          {/* Portal de Evidências do Técnico Panel */}
+          <div className="bg-white rounded-3xl border border-claro-border p-6 shadow-sm space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Smartphone size={14} className="text-claro-red" /> Portal do Técnico
+              </h3>
+              {portalData && (
+                <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded border ${
+                  portalData.status === 'LIBERADO' || portalData.status === 'EM_ENVIO'
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : 'bg-slate-100 text-slate-600 border-slate-200'
+                }`}>
+                  {portalData.status.replace('_', ' ')}
+                </span>
+              )}
+            </div>
+
+            {loadingPortal ? (
+              <div className="flex items-center justify-center py-4">
+                <Loader2 className="w-5 h-5 text-red-500 animate-spin" />
+              </div>
+            ) : portalData ? (
+              <div className="space-y-4 text-xs">
+                <p className="text-slate-500 leading-relaxed text-[11px]">
+                  Permite ao técnico de campo enviar as evidências de forma antecipada pelo celular.
+                </p>
+
+                {/* Link display and copy */}
+                <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 space-y-2">
+                  <span className="text-[10px] uppercase tracking-wide text-slate-400 font-bold block">Link de Acesso Único:</span>
+                  <div className="flex gap-1.5">
+                    <input 
+                      type="text" 
+                      readOnly 
+                      value={portalData.portalUrl} 
+                      className="w-full bg-white border border-slate-200 px-2.5 py-1.5 rounded-lg font-mono text-[10px] text-slate-600 outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(portalData.portalUrl);
+                        showToast('Link copiado para a área de transferência!', 'success');
+                      }}
+                      className="p-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-600 rounded-lg shrink-0 cursor-pointer transition-colors"
+                      title="Copiar Link"
+                    >
+                      <Copy size={14} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  <a
+                    href={portalData.portalUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-center flex items-center justify-center gap-1.5 border border-slate-200 transition-colors text-xs"
+                  >
+                    <span>Testar</span>
+                    <ExternalLink size={12} />
+                  </a>
+
+                  {updatingPortal ? (
+                    <button disabled className="flex-1 py-2 px-3 bg-slate-100 text-slate-400 font-bold rounded-xl flex items-center justify-center gap-1.5">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    </button>
+                  ) : portalData.status === 'LIBERADO' || portalData.status === 'EM_ENVIO' ? (
+                    <button
+                      type="button"
+                      onClick={() => handlePortalAction('close')}
+                      className="flex-1 py-2 px-3 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-xl border border-rose-100 transition-colors cursor-pointer text-xs"
+                    >
+                      Bloquear
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handlePortalAction('reopen')}
+                      className="flex-1 py-2 px-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold rounded-xl border border-emerald-100 transition-colors cursor-pointer text-xs"
+                    >
+                      Reabrir
+                    </button>
+                  )}
+                </div>
+
+                <div className="text-[10px] text-slate-400 space-y-1 bg-slate-50/50 p-2.5 rounded-xl border border-slate-100/60">
+                  <div className="flex justify-between">
+                    <span>Expira em:</span>
+                    <strong className="text-slate-600 font-bold">{new Date(portalData.expiraEm).toLocaleDateString('pt-BR')}</strong>
+                  </div>
+                  {portalData.ultimoAcessoEm && (
+                    <div className="flex justify-between">
+                      <span>Último acesso:</span>
+                      <strong className="text-slate-600 font-bold">{new Date(portalData.ultimoAcessoEm).toLocaleDateString('pt-BR')} às {new Date(portalData.ultimoAcessoEm).toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}</strong>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-slate-400 italic">Nenhum dado do portal localizado.</p>
+            )}
           </div>
 
           {/* Audit Trail Timeline */}
