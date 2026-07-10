@@ -1,6 +1,7 @@
 import { initDb, Env, jsonResponse } from '../../_db';
 import { getAppConfig } from '../../_config';
 import { applyRateLimit } from '../../_ratelimit';
+import { logEvent, LogLevel } from '../../_logger';
 
 // Helper to convert base64 to bytes
 function base64ToUint8Array(base64String: string): Uint8Array {
@@ -130,6 +131,12 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       ORDER BY enviada_em ASC
     `).bind(portal.id).all();
 
+    // 6. Check if LGPD consent has been accepted
+    const lgpdRow = await env.DB.prepare(
+      "SELECT id FROM ia_lgpd_aceite WHERE avaliacao_id = ?"
+    ).bind(portal.avaliacao_id).first() as any;
+    const hasAcceptedLgpd = !!lgpdRow;
+
     return jsonResponse({
       success: true,
       portal: {
@@ -138,7 +145,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         liberadoEm: portal.liberado_em,
         expiraEm: portal.expira_em,
         encerradoEm: portal.encerrado_em,
-        encerradoMotivo: portal.encerrado_motivo
+        encerradoMotivo: portal.encerrado_motivo,
+        hasAcceptedLgpd
       },
       evaluation: {
         id: avaliacao.id,
@@ -146,7 +154,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         matricula: avaliacao.matricula,
         empresa: avaliacao.empresa,
         cidadeBase: avaliacao.cidade_base,
-        certificacaoNome: avaliacao.certificacao_nome || "GPON"
+        certificacaoNome: avaliacao.certificacao_nome || "GPON",
+        dataAvaliacao: avaliacao.data
       },
       missoes: missoes || [],
       evidencias: evidencias || []
@@ -227,6 +236,54 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       });
     }
 
+    // ACTION: lgpd-accept
+    if (action === "lgpd-accept") {
+      const avaliacao = await env.DB.prepare(
+        "SELECT id, matricula FROM avaliacoes WHERE id = ?"
+      ).bind(portal.avaliacao_id).first() as any;
+
+      if (!avaliacao) {
+        return jsonResponse({ success: false, error: "Avaliação relacionada não encontrada" }, 404);
+      }
+
+      // Calculate stable technician login hash
+      const salt = env.LGPD_HASH_SALT || "default_salt";
+      const matchMatricula = String(avaliacao.matricula).trim().toUpperCase();
+      const input = `${matchMatricula}:${salt}`;
+      const enc = new TextEncoder();
+      const hashData = enc.encode(input);
+      const hashBuf = await crypto.subtle.digest('SHA-256', hashData);
+      const hashArr = Array.from(new Uint8Array(hashBuf));
+      const tecnico_login_hash = hashArr.map(b => b.toString(16).padStart(2, '0')).join('');
+
+      // Insert acceptance
+      const acceptId = crypto.randomUUID();
+      await env.DB.prepare(`
+        INSERT INTO ia_lgpd_aceite (id, avaliacao_id, tecnico_login_hash, aceite_lgpd, aceite_lgpd_em, versao_termo)
+        VALUES (?, ?, ?, 1, ?, 'v1')
+      `).bind(acceptId, portal.avaliacao_id, tecnico_login_hash, nowStr).run();
+
+      // Log audit event: PORTAL_LGPD_ACEITE
+      await logEvent(env, {
+        tipo: LogLevel.AUDITORIA,
+        evento: "PORTAL_LGPD_ACEITE",
+        usuario_id: "tecnico",
+        perfil: "tecnico",
+        ip: clientIp,
+        userAgent,
+        metadata: {
+          avaliacao_id: portal.avaliacao_id,
+          tecnico_login_hash,
+          versao_termo: 'v1'
+        }
+      });
+
+      return jsonResponse({
+        success: true,
+        message: "Aceite da LGPD registrado com sucesso."
+      });
+    }
+
     // BLOCK ALL UPLOADS / FINALIZES IF PORTAL IS CLOSED
     if (isClosed) {
       return jsonResponse({
@@ -258,6 +315,21 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       if (!rateLimitRes.allowed) {
         return jsonResponse({ success: false, error: "Limite de envio de fotos excedido. Máximo de 5 uploads por minuto." }, 429);
       }
+
+      // Log audit event: PORTAL_AVISO_UPLOAD_CONFIRMADO
+      await logEvent(env, {
+        tipo: LogLevel.AUDITORIA,
+        evento: "PORTAL_AVISO_UPLOAD_CONFIRMADO",
+        usuario_id: "tecnico",
+        perfil: "tecnico",
+        ip: clientIp,
+        userAgent,
+        metadata: {
+          avaliacao_id: portal.avaliacao_id,
+          portal_id: portal.id,
+          missao_id: missaoId
+        }
+      });
 
       // Verify and resolve the R2 bucket
       let bucket: any = null;
@@ -508,6 +580,20 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           WHERE id = ?
         `).bind(portal.avaliacao_id).run();
       }
+
+      // Log audit event: PORTAL_EVIDENCIAS_FINALIZADAS
+      await logEvent(env, {
+        tipo: LogLevel.AUDITORIA,
+        evento: "PORTAL_EVIDENCIAS_FINALIZADAS",
+        usuario_id: "tecnico",
+        perfil: "tecnico",
+        ip: clientIp,
+        userAgent,
+        metadata: {
+          avaliacao_id: portal.avaliacao_id,
+          portal_id: portal.id
+        }
+      });
 
       return jsonResponse({
         success: true,

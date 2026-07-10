@@ -4,8 +4,27 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   try {
     await initDb(env.DB);
 
+    const url = new URL(request.url);
+    const dataInicio = url.searchParams.get('dataInicio');
+    const dataFim = url.searchParams.get('dataFim');
+
+    let whereClause = '';
+    const queryParams: any[] = [];
+
+    if (dataInicio && dataFim) {
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(dataInicio) || !dateRegex.test(dataFim)) {
+        return jsonResponse({ success: false, error: "Formato de data inválido. Use AAAA-MM-DD." }, 400);
+      }
+      if (dataInicio > dataFim) {
+        return jsonResponse({ success: false, error: "A data inicial não pode ser maior que a data final." }, 400);
+      }
+      whereClause = 'WHERE a.data >= ? AND a.data <= ?';
+      queryParams.push(dataInicio, dataFim);
+    }
+
     // Fetch all evaluations, portals, and certifications
-    const query = `
+    let query = `
       SELECT 
         a.id as avaliacao_id,
         a.nome_tecnico,
@@ -22,10 +41,16 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
       FROM avaliacoes a
       LEFT JOIN certificacoes c ON a.certificacao_id = c.id
       LEFT JOIN portais_evidencias p ON a.id = p.avaliacao_id
-      ORDER BY a.data DESC, a.created_at DESC
     `;
 
-    const { results: rows } = await env.DB.prepare(query).all();
+    if (whereClause) {
+      query += ` ${whereClause}`;
+    }
+
+    query += ' ORDER BY a.data DESC, a.created_at DESC';
+
+    const stmt = env.DB.prepare(query);
+    const { results: rows } = queryParams.length > 0 ? await stmt.bind(...queryParams).all() : await stmt.all();
 
     const trackerItems = [];
 

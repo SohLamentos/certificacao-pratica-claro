@@ -54,9 +54,57 @@ export default function PortalAcompanhamento() {
   const [data, setData] = useState<TrackerItem[]>([]);
   
   // Filters & Search
+  const [searchInputValue, setSearchInputValue] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedFilter, setSelectedFilter] = useState<string>('todos');
   
+  // Date Filters
+  const [dateOption, setDateOption] = useState<string>('proximos_30');
+  const [customStartDate, setCustomStartDate] = useState<string>('');
+  const [customEndDate, setCustomEndDate] = useState<string>('');
+  const [dateValidationError, setDateValidationError] = useState<string | null>(null);
+
+  const addDays = (date: Date, days: number): Date => {
+    const result = new Date(date);
+    result.setDate(result.getDate() + days);
+    return result;
+  };
+
+  const getLocalDateString = (date: Date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const calculateRange = (option: string) => {
+    const today = new Date();
+    switch (option) {
+      case 'hoje':
+        return { start: getLocalDateString(today), end: getLocalDateString(today) };
+      case 'proximos_7':
+        return { start: getLocalDateString(today), end: getLocalDateString(addDays(today, 6)) };
+      case 'proximos_15':
+        return { start: getLocalDateString(today), end: getLocalDateString(addDays(today, 14)) };
+      case 'proximos_30':
+        return { start: getLocalDateString(today), end: getLocalDateString(addDays(today, 29)) };
+      case 'todos':
+      default:
+        return { start: null, end: null };
+    }
+  };
+
+  const [appliedDateRange, setAppliedDateRange] = useState<{ start: string | null; end: string | null }>(() => calculateRange('proximos_30'));
+
+  // Format YYYY-MM-DD back to human-friendly format
+  const formatDateLocal = (dateStr: string) => {
+    const parts = dateStr.split('-');
+    if (parts.length === 3) {
+      return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    }
+    return dateStr;
+  };
+
   // Portal Action states
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
@@ -68,11 +116,31 @@ export default function PortalAcompanhamento() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  const fetchTrackerData = async (silent = false) => {
+  const abortControllerRef = React.useRef<AbortController | null>(null);
+
+  const fetchTrackerData = async (
+    silent = false,
+    start: string | null = null,
+    end: string | null = null
+  ) => {
+    // Cancel previous request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     if (!silent) setLoading(true);
     else setRefreshing(true);
+    setError(null);
+
     try {
-      const res = await apiFetch('/api/evidencias/portais-tracker');
+      let url = '/api/evidencias/portais-tracker';
+      if (start && end) {
+        url += `?dataInicio=${start}&dataFim=${end}`;
+      }
+      
+      const res = await apiFetch(url, { signal: controller.signal });
       if (!res.ok) {
         throw new Error('Erro na requisição ao servidor');
       }
@@ -83,16 +151,83 @@ export default function PortalAcompanhamento() {
         throw new Error(json.error || 'Falha ao buscar dados');
       }
     } catch (err: any) {
+      if (err.name === 'AbortError') {
+        return; // ignore aborted request
+      }
       setError(err.message || 'Erro de conexão.');
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (abortControllerRef.current === controller) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   };
 
   useEffect(() => {
-    fetchTrackerData();
+    const range = calculateRange('proximos_30');
+    fetchTrackerData(false, range.start, range.end);
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
   }, []);
+
+  // Debounced Search Term Handler
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setSearchTerm(searchInputValue);
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [searchInputValue]);
+
+  const handleDateOptionChange = (option: string) => {
+    setDateOption(option);
+    setDateValidationError(null);
+    if (option !== 'personalizado') {
+      const range = calculateRange(option);
+      setAppliedDateRange(range);
+      fetchTrackerData(false, range.start, range.end);
+    } else {
+      if (!customStartDate) setCustomStartDate(getLocalDateString(new Date()));
+      if (!customEndDate) setCustomEndDate(getLocalDateString(addDays(new Date(), 29)));
+    }
+  };
+
+  const handleApplyCustomRange = () => {
+    setDateValidationError(null);
+    if (!customStartDate || !customEndDate) {
+      setDateValidationError("Por favor, preencha ambas as datas.");
+      return;
+    }
+    
+    const startObj = new Date(customStartDate + 'T00:00:00');
+    const endObj = new Date(customEndDate + 'T00:00:00');
+    
+    if (isNaN(startObj.getTime()) || isNaN(endObj.getTime())) {
+      setDateValidationError("Por favor, insira datas válidas.");
+      return;
+    }
+    
+    if (customStartDate > customEndDate) {
+      setDateValidationError("A data inicial não pode ser maior que a data final.");
+      return;
+    }
+    
+    const range = { start: customStartDate, end: customEndDate };
+    setAppliedDateRange(range);
+    fetchTrackerData(false, range.start, range.end);
+  };
+
+  const handleClearCustomRange = () => {
+    setCustomStartDate('');
+    setCustomEndDate('');
+    setDateValidationError(null);
+    setDateOption('proximos_30');
+    const range = calculateRange('proximos_30');
+    setAppliedDateRange(range);
+    fetchTrackerData(false, range.start, range.end);
+  };
 
   const handlePortalAction = async (avaliacaoId: string, action: 'reopen' | 'close') => {
     setActionLoading(avaliacaoId);
@@ -111,7 +246,7 @@ export default function PortalAcompanhamento() {
         const json = await res.json() as any;
         if (json.success) {
           showToast(action === 'reopen' ? 'Portal reaberto com sucesso!' : 'Portal encerrado/bloqueado com sucesso!', 'success');
-          await fetchTrackerData(true);
+          await fetchTrackerData(true, appliedDateRange.start, appliedDateRange.end);
         } else {
           showToast(json.error || 'Erro ao alterar o portal', 'error');
         }
@@ -184,7 +319,7 @@ export default function PortalAcompanhamento() {
         </div>
 
         <button
-          onClick={() => fetchTrackerData(true)}
+          onClick={() => fetchTrackerData(true, appliedDateRange.start, appliedDateRange.end)}
           disabled={refreshing}
           className="px-4 py-2 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold flex items-center gap-2 text-slate-700 shadow-xs transition-all cursor-pointer disabled:opacity-50"
         >
@@ -222,28 +357,113 @@ export default function PortalAcompanhamento() {
       </div>
 
       {/* Filter and Search Bar Row */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xs">
-        {/* Search */}
-        <div className="relative flex-1 max-w-md">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Buscar por técnico, login ou certificação..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-red-500 focus:border-red-500 transition-all text-slate-800"
-          />
-          {searchTerm && (
-            <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
-              <X size={12} />
-            </button>
-          )}
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4 shadow-xs">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          {/* Search */}
+          <div className="relative flex-1 max-w-md">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Buscar por técnico, login ou certificação..."
+              value={searchInputValue}
+              onChange={(e) => setSearchInputValue(e.target.value)}
+              className="w-full pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-red-500 focus:border-red-500 transition-all text-slate-800"
+            />
+            {searchInputValue && (
+              <button onClick={() => setSearchInputValue('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                <X size={12} />
+              </button>
+            )}
+          </div>
+
+          {/* Quick Date Filters - Horizontal scroll on mobile */}
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+            <span className="text-[10px] font-black uppercase text-slate-400 flex items-center gap-1 shrink-0">
+              <Clock size={10} className="text-red-600" /> Período da Avaliação:
+            </span>
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
+              {[
+                { id: 'hoje', label: 'Hoje' },
+                { id: 'proximos_7', label: 'Próximos 7 dias' },
+                { id: 'proximos_15', label: 'Próximos 15 dias' },
+                { id: 'proximos_30', label: 'Próximos 30 dias' },
+                { id: 'personalizado', label: 'Período personalizado' },
+                { id: 'todos', label: 'Todos' }
+              ].map((opt) => (
+                <button
+                  key={opt.id}
+                  onClick={() => handleDateOptionChange(opt.id)}
+                  className={`px-3 py-1.5 rounded-lg text-[11px] font-black transition-all cursor-pointer shrink-0 ${
+                    dateOption === opt.id
+                      ? 'bg-slate-900 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
-        {/* Filter Scrollable Buttons */}
-        <div className="flex flex-wrap items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
+        {/* Custom Date Picker Block if selected */}
+        {dateOption === 'personalizado' && (
+          <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
+            <div className="flex flex-wrap items-end gap-3.5">
+              <div className="space-y-1">
+                <label className="block text-[10px] font-black uppercase text-slate-500">Data Inicial</label>
+                <input
+                  type="date"
+                  value={customStartDate}
+                  onChange={(e) => {
+                    setCustomStartDate(e.target.value);
+                    setDateValidationError(null);
+                  }}
+                  className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-red-500 focus:border-red-500"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="block text-[10px] font-black uppercase text-slate-500">Data Final</label>
+                <input
+                  type="date"
+                  value={customEndDate}
+                  onChange={(e) => {
+                    setCustomEndDate(e.target.value);
+                    setDateValidationError(null);
+                  }}
+                  className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-red-500 focus:border-red-500"
+                />
+              </div>
+              
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleApplyCustomRange}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-black rounded-lg shadow-xs transition-colors cursor-pointer"
+                >
+                  Aplicar
+                </button>
+                <button
+                  onClick={handleClearCustomRange}
+                  className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-black rounded-lg transition-colors cursor-pointer"
+                >
+                  Limpar
+                </button>
+              </div>
+            </div>
+
+            {dateValidationError && (
+              <p className="text-xs text-red-600 font-bold flex items-center gap-1">
+                <AlertCircle size={12} />
+                {dateValidationError}
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Status Filters scrollable buttons */}
+        <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
           <span className="text-[10px] font-black uppercase text-slate-400 mr-1 flex items-center gap-1 shrink-0">
-            <Filter size={10} /> Filtros:
+            <Filter size={10} /> Status das Evidências:
           </span>
           {[
             { id: 'todos', label: 'Todos' },
@@ -281,7 +501,10 @@ export default function PortalAcompanhamento() {
           <AlertCircle className="w-12 h-12 text-rose-500 mx-auto mb-3" />
           <h3 className="text-sm font-black text-slate-800">Falha ao carregar tracker</h3>
           <p className="text-xs text-slate-500 mt-1">{error}</p>
-          <button onClick={() => fetchTrackerData()} className="mt-4 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-xs font-bold rounded-xl transition-all">
+          <button 
+            onClick={() => fetchTrackerData(false, appliedDateRange.start, appliedDateRange.end)} 
+            className="mt-4 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-xs font-bold rounded-xl transition-all"
+          >
             Tentar novamente
           </button>
         </div>
@@ -289,12 +512,24 @@ export default function PortalAcompanhamento() {
         <div className="py-16 text-center bg-white rounded-2xl border border-slate-200">
           <Smartphone className="w-12 h-12 text-slate-300 mx-auto mb-3 animate-pulse" />
           <h3 className="text-sm font-black text-slate-800">Nenhum portal localizado</h3>
-          <p className="text-xs text-slate-500 mt-1">Nenhum item corresponde aos critérios de pesquisa ou filtros aplicados.</p>
+          <p className="text-xs text-slate-500 mt-1">Nenhum item corresponde aos critérios de pesquisa ou filtros aplicados no período.</p>
         </div>
       ) : (
         <div className="space-y-4">
-          <div className="text-slate-400 text-[10px] uppercase font-black tracking-wide flex justify-between px-1">
-            <span>Resultados: {filteredData.length} avaliações localizadas</span>
+          <div className="text-slate-400 text-[10px] uppercase font-black tracking-wide flex flex-col sm:flex-row sm:justify-between px-1 gap-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span>Resultados: {filteredData.length} avaliações localizadas</span>
+              {appliedDateRange.start && appliedDateRange.end && (
+                <span className="text-slate-500 font-bold bg-slate-100 px-2 py-0.5 rounded-full normal-case text-[9px]">
+                  • exibindo de {formatDateLocal(appliedDateRange.start)} até {formatDateLocal(appliedDateRange.end)}
+                </span>
+              )}
+              {!appliedDateRange.start && (
+                <span className="text-slate-500 font-bold bg-slate-100 px-2 py-0.5 rounded-full normal-case text-[9px]">
+                  • exibindo todo o período
+                </span>
+              )}
+            </div>
             <span>Estabilidade da Rede: 100% OK</span>
           </div>
 

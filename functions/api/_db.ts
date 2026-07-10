@@ -1,4 +1,5 @@
 import { runInitialMigration } from './migrations/0001_initial_schema';
+import { runIncrementalMigration } from './migrations/0002_add_mission_config_columns';
 import { Logger } from './_logger';
 
 export interface Env {
@@ -47,6 +48,7 @@ export async function initDb(db: D1Database): Promise<void> {
 
   try {
     await runInitialMigration(db);
+    await runIncrementalMigration(db);
 
     // Ensure new tables are created for evolution
     await db.prepare(`
@@ -209,6 +211,17 @@ export async function initDb(db: D1Database): Promise<void> {
 
     // Portal de Evidências Antecipadas Tables Creation
     await db.prepare(`
+      CREATE TABLE IF NOT EXISTS ia_lgpd_aceite (
+        id TEXT PRIMARY KEY,
+        avaliacao_id TEXT NOT NULL,
+        tecnico_login_hash TEXT NOT NULL,
+        aceite_lgpd INTEGER DEFAULT 1,
+        aceite_lgpd_em TEXT NOT NULL,
+        versao_termo TEXT NOT NULL
+      )
+    `).run();
+
+    await db.prepare(`
       CREATE TABLE IF NOT EXISTS portais_evidencias (
         id TEXT PRIMARY KEY,
         avaliacao_id TEXT NOT NULL,
@@ -239,6 +252,13 @@ export async function initDb(db: D1Database): Promise<void> {
         obrigatoria INTEGER DEFAULT 1,
         ordem INTEGER NOT NULL,
         ativa INTEGER DEFAULT 1,
+        permite_camera INTEGER DEFAULT 1,
+        permite_galeria INTEGER DEFAULT 1,
+        prompt_ia_especifico TEXT,
+        created_by TEXT,
+        updated_by TEXT,
+        exemplo_correto_r2_key TEXT,
+        exemplo_incorreto_r2_key TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       )

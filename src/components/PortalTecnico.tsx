@@ -51,6 +51,7 @@ interface PortalState {
   expira_em: string;
   encerradoEm: string | null;
   encerradoMotivo: string | null;
+  hasAcceptedLgpd?: boolean;
 }
 
 interface EvaluationState {
@@ -60,6 +61,7 @@ interface EvaluationState {
   empresa: string;
   cidadeBase: string;
   certificacaoNome: string;
+  dataAvaliacao?: string;
 }
 
 interface ActivePortalOption {
@@ -123,6 +125,60 @@ async function processAndCompressImage(file: File): Promise<{ base64: string; si
   });
 }
 
+export function formatNomePrivado(nomeCompleto?: string): string {
+  if (!nomeCompleto || typeof nomeCompleto !== 'string') {
+    return 'Técnico';
+  }
+  const normalized = nomeCompleto.trim().replace(/\s+/g, ' ');
+  if (!normalized) {
+    return 'Técnico';
+  }
+  const parts = normalized.split(' ');
+  if (parts.length === 1) {
+    return parts[0];
+  }
+  const firstName = parts[0];
+  const lastSurname = parts[parts.length - 1];
+  const initial = lastSurname.charAt(0).toUpperCase();
+  return `${firstName} ${initial}.`;
+}
+
+export function formatDiasRestantes(dataAvaliacao?: string): string {
+  if (!dataAvaliacao) {
+    return 'Data da avaliação indisponível';
+  }
+
+  const parts = dataAvaliacao.split('T')[0].split('-');
+  if (parts.length !== 3) {
+    return 'Data da avaliação indisponível';
+  }
+
+  const year = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10) - 1; // 0-indexed
+  const day = parseInt(parts[2], 10);
+
+  if (isNaN(year) || isNaN(month) || isNaN(day)) {
+    return 'Data da avaliação indisponível';
+  }
+
+  const targetDate = new Date(year, month, day, 0, 0, 0, 0);
+  const today = new Date();
+  const todayDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
+
+  const diffTime = targetDate.getTime() - todayDate.getTime();
+  const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+
+  if (diffDays > 1) {
+    return `${diffDays} dias restantes`;
+  } else if (diffDays === 1) {
+    return '1 dia restante';
+  } else if (diffDays === 0) {
+    return 'Avaliação hoje';
+  } else {
+    return 'Avaliação em atraso';
+  }
+}
+
 export default function PortalTecnico({ token }: PortalTecnicoProps) {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [sessionHash, setSessionHash] = useState<string>('');
@@ -147,6 +203,11 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
   const [uploadingMissionId, setUploadingMissionId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [showSuccessScreen, setShowSuccessScreen] = useState<boolean>(false);
+  
+  // LGPD states
+  const [hasAcceptedLgpdLocally, setHasAcceptedLgpdLocally] = useState<boolean>(false);
+  const [lgpdChecked, setLgpdChecked] = useState<boolean>(false);
+  const [showPolicyDetails, setShowPolicyDetails] = useState<boolean>(false);
 
   // Load portal data
   const loadPortalDataForToken = async (currentToken: string, currentSessionHash?: string, silent = false) => {
@@ -162,6 +223,11 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
       }
       const data = await res.json() as any;
       setPortal(data.portal);
+      if (data.portal?.hasAcceptedLgpd) {
+        setHasAcceptedLgpdLocally(true);
+      } else {
+        setHasAcceptedLgpdLocally(false);
+      }
       setEvaluation(data.evaluation);
       setMissoes(data.missoes);
       setEvidencias(data.evidencias);
@@ -290,10 +356,46 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
     }
   };
 
+  // Handle LGPD Consent submit
+  const handleLgpdAcceptSubmit = async () => {
+    if (!lgpdChecked || submitting) return;
+    const currentToken = token || selectedPortalToken;
+    if (!currentToken) return;
+
+    setSubmitting(true);
+    try {
+      const res = await apiFetch(`/api/evidencias/portal/${currentToken}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "lgpd-accept",
+          sessionHash
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json() as any;
+        alert(err.error || "Falha ao registrar aceite da LGPD.");
+        return;
+      }
+
+      setHasAcceptedLgpdLocally(true);
+    } catch (err) {
+      alert("Erro de conexão ao registrar o aceite.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   // Handle image upload per mission
   const handleFileUpload = async (missionId: string, file: File) => {
     const currentToken = token || selectedPortalToken;
     if (!currentToken) return;
+
+    // Warning confirmation before upload (Requirement 4)
+    if (!confirm("Confirme que a foto não contém pessoas, documentos, placas, endereços ou dados pessoais.")) {
+      return;
+    }
 
     setUploadingMissionId(missionId);
     setErrorMsg(null);
@@ -427,7 +529,7 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
                   </span>
                 </div>
                 <h3 className="text-xs font-bold text-white group-hover:text-red-400 transition-colors">
-                  {p.nomeTecnico}
+                  {formatNomePrivado(p.nomeTecnico)}
                 </h3>
                 <p className="text-[10px] text-slate-400 mt-1">
                   Empresa: <strong className="text-slate-300 font-bold">{p.empresa}</strong>
@@ -579,7 +681,7 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
 
           <h1 className="text-xl font-bold mb-2 text-white">Evidências Enviadas com Sucesso!</h1>
           <p className="text-sm text-slate-400 leading-relaxed mb-6">
-            Obrigado, <strong>{evaluation?.nomeTecnico}</strong>! Suas fotos foram comprimidas de forma segura e enviadas para análise técnica.
+            Obrigado, <strong>{formatNomePrivado(evaluation?.nomeTecnico)}</strong>! Suas fotos foram comprimidas de forma segura e enviadas para análise técnica.
           </p>
 
           <div className="bg-slate-950/60 rounded-xl p-4 text-left border border-slate-800/60 mb-6 space-y-2 text-xs text-slate-400">
@@ -621,6 +723,104 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
     );
   }
 
+  // Render LGPD Consent Screen if authenticated but not yet accepted (Requirement 3)
+  if (isAuthenticated && !hasAcceptedLgpdLocally) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-white flex flex-col justify-center items-center p-4 sm:p-6" id="lgpd-consent">
+        <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden space-y-6">
+          <div className="absolute top-0 left-0 w-full h-1.5 bg-red-600" />
+
+          <div className="flex flex-col items-center">
+            <div className="w-12 h-12 rounded-full bg-red-950 flex items-center justify-center border border-red-800/40 mb-3">
+              <ShieldCheck className="w-6 h-6 text-red-500" />
+            </div>
+            <h1 className="text-lg font-bold text-center">Termo de Ciência e Privacidade (LGPD)</h1>
+            <p className="text-xs text-slate-400 text-center mt-1">Sua segurança e privacidade são nossa prioridade</p>
+          </div>
+
+          <div className="bg-slate-950/60 rounded-xl p-4 border border-slate-800/60 text-xs text-slate-300 leading-relaxed space-y-3">
+            <p className="font-semibold text-white">Toda foto enviada será utilizada exclusivamente para análise técnica da certificação.</p>
+            <p className="text-slate-400">Não envie imagens contendo:</p>
+            <ul className="list-disc list-inside space-y-1 text-slate-400 pl-1">
+              <li>clientes ou outras pessoas;</li>
+              <li>documentos;</li>
+              <li>placas de veículos;</li>
+              <li>telas com dados pessoais;</li>
+              <li>contratos;</li>
+              <li>endereços;</li>
+              <li>números de telefone;</li>
+              <li>QR Codes com informações pessoais.</li>
+            </ul>
+            <p className="font-semibold text-red-400">Envie apenas evidências técnicas do serviço executado.</p>
+          </div>
+
+          {/* Collapsible Policy details */}
+          <div className="border-t border-slate-800/80 pt-3">
+            <button
+              onClick={() => setShowPolicyDetails(!showPolicyDetails)}
+              className="w-full flex justify-between items-center text-xs text-slate-400 hover:text-white transition-colors py-1 cursor-pointer"
+            >
+              <span className="underline font-medium">Como suas imagens serão utilizadas?</span>
+              {showPolicyDetails ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </button>
+            {showPolicyDetails && (
+              <div className="mt-3 bg-slate-950/40 border border-slate-800/40 rounded-xl p-3.5 space-y-3 text-[11px] text-slate-400 leading-normal">
+                <div>
+                  <h4 className="font-bold text-slate-300 mb-0.5">Finalidade:</h4>
+                  <p>Validação estritamente técnica do checklist de qualidade.</p>
+                </div>
+                <div>
+                  <h4 className="font-bold text-slate-300 mb-0.5">Acesso:</h4>
+                  <p>Restrito aos analistas credenciados de CQ e ao modelo de IA local de auditoria técnica.</p>
+                </div>
+                <div>
+                  <h4 className="font-bold text-slate-300 mb-0.5">Armazenamento:</h4>
+                  <p>Ambiente de nuvem seguro R2 da Claro, criptografado.</p>
+                </div>
+                <div>
+                  <h4 className="font-bold text-slate-300 mb-0.5">Retenção:</h4>
+                  <p>Mantido pelo prazo de auditoria da certificação e eliminado automaticamente de acordo com as regras de retenção de dados do projeto.</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-4 pt-2">
+            <label className="flex items-start gap-3 select-none cursor-pointer">
+              <input
+                type="checkbox"
+                checked={lgpdChecked}
+                onChange={(e) => setLgpdChecked(e.target.checked)}
+                className="mt-1 w-4.5 h-4.5 accent-red-600 rounded border-slate-700 bg-slate-950 outline-none cursor-pointer"
+              />
+              <span className="text-xs text-slate-300 leading-normal">
+                Estou ciente e confirmo que enviarei apenas evidências técnicas, sem dados pessoais desnecessários.
+              </span>
+            </label>
+
+            <button
+              onClick={handleLgpdAcceptSubmit}
+              disabled={!lgpdChecked || submitting}
+              className="w-full py-3 bg-red-600 hover:bg-red-700 disabled:bg-slate-800 disabled:text-slate-500 text-white font-semibold rounded-xl text-sm transition-all flex items-center justify-center gap-2 shadow-lg shadow-red-900/10 cursor-pointer"
+            >
+              {submitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Registrando ciência...
+                </>
+              ) : (
+                <>
+                  Continuar para as Missões
+                  <Check className="w-4 h-4" />
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col" id="portal-dashboard">
       {/* Top Header */}
@@ -639,7 +839,7 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
           {portal && (
             <div className="flex items-center gap-1 bg-slate-950 px-2.5 py-1 rounded-full border border-slate-800 text-[11px] text-slate-400">
               <Clock className="w-3.5 h-3.5 text-red-500" />
-              <span>{daysLeft} {daysLeft === 1 ? 'dia restante' : 'dias restantes'}</span>
+              <span>{formatDiasRestantes(evaluation?.dataAvaliacao)}</span>
             </div>
           )}
         </div>
@@ -670,7 +870,7 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
             )}
           </div>
           
-          <h2 className="text-base font-bold text-white leading-tight">{evaluation?.nomeTecnico}</h2>
+          <h2 className="text-base font-bold text-white leading-tight">{formatNomePrivado(evaluation?.nomeTecnico)}</h2>
           
           <div className="grid grid-cols-2 gap-x-4 gap-y-2 mt-3 pt-3 border-t border-slate-800/60 text-xs text-slate-400">
             <div>
@@ -723,156 +923,221 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
         <div className="space-y-3">
           <h3 className="text-xs uppercase font-bold text-slate-400 tracking-wider">Suas Missões Técnicas</h3>
 
-          {missoes.map((m) => {
-            const hasUpload = uploadedIds.includes(m.id);
-            const ev = evidencias.find(e => e.missao_id === m.id);
-            const isExpanded = expandedMission === m.id;
-            
-            return (
-              <div 
-                key={m.id}
-                className={`bg-slate-900 border rounded-2xl overflow-hidden transition-all duration-200 ${
-                  hasUpload ? 'border-emerald-950' : 'border-slate-800'
-                }`}
-              >
-                {/* Header of Accordion */}
-                <button
-                  type="button"
-                  onClick={() => setExpandedMission(isExpanded ? null : m.id)}
-                  className="w-full text-left p-4 flex items-center justify-between hover:bg-slate-800/30 transition-all outline-none"
+          {/* Fixed discrete warning (Requirement 5) */}
+          <div className="bg-slate-900 border border-slate-800/80 rounded-xl p-3 text-[11px] text-slate-400 leading-relaxed flex items-start gap-2.5">
+            <AlertCircle className="w-4.5 h-4.5 text-red-500 shrink-0 mt-0.5" />
+            <p>
+              <strong className="text-slate-300">Fotografe apenas o serviço técnico executado.</strong> Evite capturar rostos de clientes, crachás de terceiros, documentos ou placas de veículos.
+            </p>
+          </div>
+
+          {missoes.length === 0 ? (
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center text-slate-400 space-y-3" id="no-missions-warning">
+              <AlertCircle className="w-10 h-10 text-red-500 mx-auto animate-pulse" />
+              <p className="text-sm font-semibold text-slate-200">
+                Esta certificação ainda não possui missões de evidência configuradas. Procure seu analista.
+              </p>
+            </div>
+          ) : (
+            missoes.map((m) => {
+              const hasUpload = uploadedIds.includes(m.id);
+              const ev = evidencias.find(e => e.missao_id === m.id);
+              const isExpanded = expandedMission === m.id;
+              
+              return (
+                <div 
+                  key={m.id}
+                  className={`bg-slate-900 border rounded-2xl overflow-hidden transition-all duration-200 ${
+                    hasUpload ? 'border-emerald-950' : 'border-slate-800'
+                  }`}
                 >
-                  <div className="flex items-center gap-3">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center border shrink-0 ${
-                      hasUpload 
-                        ? 'bg-emerald-950/80 text-emerald-400 border-emerald-800/40' 
-                        : 'bg-slate-950 text-slate-500 border-slate-800'
-                    }`}>
-                      {hasUpload ? (
-                        <Check className="w-4 h-4 text-emerald-400 font-black" />
-                      ) : (
-                        <span className="text-xs font-black">{m.ordem}</span>
-                      )}
-                    </div>
-                    <div>
-                      <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
-                        {m.nome}
-                        {m.obrigatoria === 1 && (
-                          <span className="text-[9px] bg-red-950 text-red-400 px-1.5 py-0.2 rounded border border-red-900/30">Obrigatória</span>
+                  {/* Header of Accordion */}
+                  <button
+                    type="button"
+                    onClick={() => setExpandedMission(isExpanded ? null : m.id)}
+                    className="w-full text-left p-4 flex items-center justify-between hover:bg-slate-800/30 transition-all outline-none"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center border shrink-0 ${
+                        hasUpload 
+                          ? 'bg-emerald-950/80 text-emerald-400 border-emerald-800/40' 
+                          : 'bg-slate-950 text-slate-500 border-slate-800'
+                      }`}>
+                        {hasUpload ? (
+                          <Check className="w-4 h-4 text-emerald-400 font-black" />
+                        ) : (
+                          <span className="text-xs font-black">{m.ordem}</span>
                         )}
-                      </h4>
-                      <p className="text-[10px] text-slate-400 mt-0.5 line-clamp-1">{m.descricao}</p>
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                          {m.nome}
+                          {m.obrigatoria === 1 && (
+                            <span className="text-[9px] bg-red-950 text-red-400 px-1.5 py-0.2 rounded border border-red-900/30">Obrigatória</span>
+                          )}
+                        </h4>
+                        <p className="text-[10px] text-slate-400 mt-0.5 line-clamp-1">{m.descricao}</p>
+                      </div>
                     </div>
-                  </div>
-                  {isExpanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
-                </button>
+                    {isExpanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                  </button>
 
-                {/* Content of Accordion */}
-                {isExpanded && (
-                  <div className="px-4 pb-4 border-t border-slate-800/60 pt-3 space-y-3">
-                    {/* Guidance Alert */}
-                    <div className="bg-slate-950 rounded-xl p-3 border border-slate-800/50">
-                      <span className="text-[9px] uppercase tracking-wide text-red-500 font-bold block mb-1">Como Fotografar:</span>
-                      <p className="text-[11px] text-slate-300 leading-relaxed font-medium">{m.orientacao_foto}</p>
-                    </div>
+                  {/* Content of Accordion */}
+                  {isExpanded && (
+                    <div className="px-4 pb-4 border-t border-slate-800/60 pt-3 space-y-3">
+                      {/* Guidance Alert */}
+                      <div className="bg-slate-950 rounded-xl p-3 border border-slate-800/50">
+                        <span className="text-[9px] uppercase tracking-wide text-red-500 font-bold block mb-1">Como Fotografar:</span>
+                        <p className="text-[11px] text-slate-300 leading-relaxed font-medium">{m.orientacao_foto}</p>
+                      </div>
 
-                    {/* Previews / Upload Area */}
-                    {hasUpload && ev ? (
-                      <div className="relative group rounded-xl overflow-hidden border border-slate-800">
-                        <img 
-                          src={`/api/ia/evidencias/file?key=${encodeURIComponent(ev.r2_key)}`}
-                          alt="Evidência Técnica"
-                          className="w-full h-44 object-cover"
-                          referrerPolicy="no-referrer"
-                        />
-                        <div className="absolute inset-0 bg-slate-950/80 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex flex-col justify-end p-3">
-                          <span className="text-[9px] text-slate-500 block mb-0.5 uppercase tracking-wider">Foto Enviada</span>
-                          <span className="text-[10px] text-slate-300 leading-tight">
-                            Status: {ev.status === 'APROVADO' ? '✓ Aprovada pela IA' : ev.status === 'REJEITADO' ? '✗ Rejeitada' : '⚡ Aguardando Auditoria'}
-                          </span>
-                          
-                          {!isPortalClosed && (
-                            <label className="mt-3.5 py-2 px-3 bg-red-600 hover:bg-red-700 text-white font-semibold text-center rounded-lg text-xs cursor-pointer flex items-center justify-center gap-1.5 transition-all">
-                              <Camera className="w-3.5 h-3.5" />
-                              Substituir Foto
-                              <input 
-                                type="file" 
-                                accept="image/jpeg,image/png,image/webp" 
-                                capture="environment"
-                                className="hidden" 
-                                onChange={(e) => {
-                                  if (e.target.files && e.target.files[0]) {
-                                    handleFileUpload(m.id, e.target.files[0]);
-                                  }
-                                }}
-                                disabled={uploadingMissionId !== null}
-                              />
-                            </label>
+                      {/* Photo Examples (Section 7 / 17) */}
+                      {(m.exemplo_correto_r2_key || m.exemplo_incorreto_r2_key) && (
+                        <div className="grid grid-cols-2 gap-2.5 bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/40">
+                          {m.exemplo_correto_r2_key && (
+                            <div className="space-y-1">
+                              <span className="text-[9px] uppercase font-bold text-emerald-500 block">✓ Exemplo Correto:</span>
+                              <div className="rounded-lg overflow-hidden border border-emerald-900/30 bg-slate-950">
+                                <img 
+                                  src={`/api/ia/evidencias/file?key=${encodeURIComponent(m.exemplo_correto_r2_key)}`}
+                                  alt="Exemplo Correto"
+                                  className="w-full h-24 object-cover"
+                                  referrerPolicy="no-referrer"
+                                />
+                              </div>
+                            </div>
+                          )}
+                          {m.exemplo_incorreto_r2_key && (
+                            <div className="space-y-1">
+                              <span className="text-[9px] uppercase font-bold text-rose-500 block">✗ Exemplo Errado:</span>
+                              <div className="rounded-lg overflow-hidden border border-rose-900/30 bg-slate-950">
+                                <img 
+                                  src={`/api/ia/evidencias/file?key=${encodeURIComponent(m.exemplo_incorreto_r2_key)}`}
+                                  alt="Exemplo Incorreto"
+                                  className="w-full h-24 object-cover"
+                                  referrerPolicy="no-referrer"
+                                />
+                              </div>
+                            </div>
                           )}
                         </div>
-                      </div>
-                    ) : (
-                      !isPortalClosed && (
-                        <div className="flex flex-col gap-3">
-                          {/* Main Camera trigger button */}
-                          <label className="py-4 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-xs text-center cursor-pointer flex flex-col items-center justify-center gap-2 transition-all shadow-md active:scale-98">
-                            <Camera className="w-6 h-6 animate-pulse" />
-                            <span>TIRAR FOTO / ABRIR CÂMERA</span>
-                            <input 
-                              type="file" 
-                              accept="image/jpeg,image/png,image/webp" 
-                              capture="environment"
-                              className="hidden" 
-                              onChange={(e) => {
-                                if (e.target.files && e.target.files[0]) {
-                                  handleFileUpload(m.id, e.target.files[0]);
-                                }
-                              }}
-                              disabled={uploadingMissionId !== null}
-                            />
-                          </label>
+                      )}
 
-                          {/* Or Standard upload trigger for files */}
-                          <div className="border-2 border-dashed border-slate-800 rounded-xl p-4 flex flex-col items-center justify-center bg-slate-950/20">
-                            <Upload className="w-5 h-5 text-slate-500 mb-1" />
-                            <p className="text-[10px] text-slate-500 mb-2">Arraste a foto ou selecione do dispositivo</p>
-                            <label className="py-1.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold rounded-lg text-xs cursor-pointer transition-colors">
-                              Selecionar Arquivo
-                              <input 
-                                type="file" 
-                                accept="image/jpeg,image/png,image/webp" 
-                                className="hidden" 
-                                onChange={(e) => {
-                                  if (e.target.files && e.target.files[0]) {
-                                    handleFileUpload(m.id, e.target.files[0]);
-                                  }
-                                }}
-                                disabled={uploadingMissionId !== null}
-                              />
-                            </label>
+                      {/* Previews / Upload Area */}
+                      {hasUpload && ev ? (
+                        <div className="relative group rounded-xl overflow-hidden border border-slate-800">
+                          <img 
+                            src={`/api/ia/evidencias/file?key=${encodeURIComponent(ev.r2_key)}`}
+                            alt="Evidência Técnica"
+                            className="w-full h-44 object-cover"
+                            referrerPolicy="no-referrer"
+                          />
+                          <div className="absolute inset-0 bg-slate-950/80 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex flex-col justify-end p-3">
+                            <span className="text-[9px] text-slate-500 block mb-0.5 uppercase tracking-wider">Foto Enviada</span>
+                            <span className="text-[10px] text-slate-300 leading-tight">
+                              Status: {ev.status === 'APROVADO' ? '✓ Aprovada pela IA' : ev.status === 'REJEITADO' ? '✗ Rejeitada' : '⚡ Aguardando Auditoria'}
+                            </span>
+                            
+                            {!isPortalClosed && (
+                              <label className="mt-3.5 py-2 px-3 bg-red-600 hover:bg-red-700 text-white font-semibold text-center rounded-lg text-xs cursor-pointer flex items-center justify-center gap-1.5 transition-all">
+                                <Camera className="w-3.5 h-3.5" />
+                                Substituir Foto
+                                <input 
+                                  type="file" 
+                                  accept="image/jpeg,image/png,image/webp" 
+                                  capture="environment"
+                                  className="hidden" 
+                                  onChange={(e) => {
+                                    if (e.target.files && e.target.files[0]) {
+                                      handleFileUpload(m.id, e.target.files[0]);
+                                    }
+                                  }}
+                                  disabled={uploadingMissionId !== null}
+                                />
+                              </label>
+                            )}
                           </div>
                         </div>
-                      )
-                    )}
+                      ) : (
+                        !isPortalClosed && (
+                          <div className="flex flex-col gap-3">
+                            {/* Main Camera trigger button (respect permite_camera) */}
+                            {m.permite_camera !== 0 && (
+                              <label className="py-4 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-xs text-center cursor-pointer flex flex-col items-center justify-center gap-2 transition-all shadow-md active:scale-98">
+                                <Camera className="w-6 h-6 animate-pulse" />
+                                <span>TIRAR FOTO / ABRIR CÂMERA</span>
+                                <input 
+                                  type="file" 
+                                  accept="image/jpeg,image/png,image/webp" 
+                                  capture="environment"
+                                  className="hidden" 
+                                  onChange={(e) => {
+                                    if (e.target.files && e.target.files[0]) {
+                                      handleFileUpload(m.id, e.target.files[0]);
+                                    }
+                                  }}
+                                  disabled={uploadingMissionId !== null}
+                                />
+                              </label>
+                            )}
 
-                    {/* Loader overlay during upload processing */}
-                    {uploadingMissionId === m.id && (
-                      <div className="flex items-center justify-center gap-2 bg-slate-950/75 p-3 rounded-xl border border-slate-800/50">
-                        <Loader2 className="w-4 h-4 text-red-500 animate-spin" />
-                        <p className="text-xs text-red-400 font-semibold">Comprimindo e enviando foto de forma segura...</p>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+                            {/* Or Standard upload trigger for files (respect permite_galeria) */}
+                            {m.permite_galeria !== 0 && (
+                              <div className="border-2 border-dashed border-slate-800 rounded-xl p-4 flex flex-col items-center justify-center bg-slate-950/20">
+                                <Upload className="w-5 h-5 text-slate-500 mb-1" />
+                                <p className="text-[10px] text-slate-500 mb-2">Arraste a foto ou selecione do dispositivo</p>
+                                <label className="py-1.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold rounded-lg text-xs cursor-pointer transition-colors">
+                                  Selecionar Arquivo
+                                  <input 
+                                    type="file" 
+                                    accept="image/jpeg,image/png,image/webp" 
+                                    className="hidden" 
+                                    onChange={(e) => {
+                                      if (e.target.files && e.target.files[0]) {
+                                        handleFileUpload(m.id, e.target.files[0]);
+                                      }
+                                    }}
+                                    disabled={uploadingMissionId !== null}
+                                  />
+                                </label>
+                              </div>
+                            )}
+
+                            {m.permite_camera === 0 && m.permite_galeria === 0 && (
+                              <div className="border border-slate-800 p-4 rounded-xl text-center text-xs text-slate-500">
+                                Envio de imagem desativado para esta missão.
+                              </div>
+                            )}
+                          </div>
+                        )
+                      )}
+
+                      {/* Loader overlay during upload processing */}
+                      {uploadingMissionId === m.id && (
+                        <div className="flex items-center justify-center gap-2 bg-slate-950/75 p-3 rounded-xl border border-slate-800/50">
+                          <Loader2 className="w-4 h-4 text-red-500 animate-spin" />
+                          <p className="text-xs text-red-400 font-semibold">Comprimindo e enviando foto de forma segura...</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
         </div>
       </main>
 
       {/* Persistent Sticky Footer with Finalize action */}
       {!isPortalClosed && (
         <footer className="bg-slate-900 border-t border-slate-800 p-4 sticky bottom-0 z-40 shadow-xl">
-          <div className="max-w-xl mx-auto flex flex-col gap-2">
+          <div className="max-w-xl mx-auto flex flex-col gap-2.5">
+            
+            {/* Finalization confirmation text (Requirement 6) */}
+            <p className="text-[10px] text-slate-400 text-center leading-relaxed">
+              Ao finalizar, você confirma que revisou as fotos e que nenhuma delas contém rostos, documentos ou dados pessoais de clientes ou técnicos.
+            </p>
+
             <button
               onClick={handleFinalizePortal}
               disabled={submitting || !isFullyComplete}

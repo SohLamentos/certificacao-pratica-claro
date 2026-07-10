@@ -21,7 +21,8 @@ import {
   X,
   RefreshCw,
   Cpu,
-  Loader2
+  Loader2,
+  Settings2
 } from 'lucide-react';
 
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -39,6 +40,7 @@ import AnalistaIdentificationGate from './components/AnalistaIdentificationGate'
 import SettingsView from './components/SettingsView';
 import CertificacaoIAView from './components/CertificacaoIAView';
 import IARulesConfig from './components/IARulesConfig';
+import EvidenciasConfig from './components/EvidenciasConfig';
 import PortalTecnico from './components/PortalTecnico';
 import PortalAcompanhamento from './components/PortalAcompanhamento';
 import { Avaliacao, CertificacaoType, AvaliacaoStatus, ChecklistValue, CQ } from './types';
@@ -782,6 +784,7 @@ export function AppContent() {
     { id: 'historico', label: 'Histórico Geral', icon: History },
     { id: 'cqs', label: 'Gerenciar Avaliadores', icon: Users },
     { id: 'ia_config', label: 'Configuração da IA', icon: Cpu },
+    { id: 'evidencias_config', label: 'Configurar Evidências', icon: Settings2 },
     { id: 'configuracoes', label: 'Configurações', icon: Settings },
   ];
 
@@ -1074,6 +1077,18 @@ export function AppContent() {
                 transition={{ duration: 0.25 }}
               >
                 <IARulesConfig />
+              </motion.div>
+            )}
+
+            {currentView === 'evidencias_config' && currentProfile === 'analista' && (
+              <motion.div
+                key="evidencias_config"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+                transition={{ duration: 0.25 }}
+              >
+                <EvidenciasConfig />
               </motion.div>
             )}
 
