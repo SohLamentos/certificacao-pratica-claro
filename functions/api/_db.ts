@@ -1,6 +1,7 @@
 import { runInitialMigration } from './migrations/0001_initial_schema';
 import { runIncrementalMigration } from './migrations/0002_add_mission_config_columns';
 import { runRetentionMigration } from './migrations/0003_add_retention_columns';
+import { runOperationalSupportMigration } from './migrations/0004_add_operational_support_tables';
 import { Logger } from './_logger';
 
 export interface Env {
@@ -59,6 +60,7 @@ export async function initDb(db: D1Database): Promise<void> {
     await runInitialMigration(db);
     await runIncrementalMigration(db);
     await runRetentionMigration(db);
+    await runOperationalSupportMigration(db);
 
     // Ensure new tables are created for evolution
     await db.prepare(`
