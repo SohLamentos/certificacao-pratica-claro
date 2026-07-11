@@ -61,6 +61,10 @@ export interface Avaliacao {
   resultado?: AvaliacaoResult; // Final results when status is 'Concluída' or previewed
   observacao?: string; // Optional notes/observation
   notaTeorica?: number; // Theoretical exam grade (0 to 10)
+  iaStatusConsolidado?: 'NAO_SOLICITADA' | 'TRIAGEM' | 'PRONTA_PARA_ANALISE' | 'EM_ANALISE' | 'CONCLUIDA' | 'REUTILIZADA' | 'PARCIALMENTE_DESATUALIZADA' | 'DESATUALIZADA' | 'ERRO' | 'PENDENTE_REVISAO_CQ' | 'CONFIRMADA_CQ';
+  iaResultadoConsolidadoJson?: string | null;
+  iaFingerprintConsolidada?: string | null;
+  iaReanalisePendente?: number;
   createdAt: string;
   updatedAt: string;
 }

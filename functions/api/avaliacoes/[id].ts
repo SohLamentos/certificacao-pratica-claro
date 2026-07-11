@@ -62,6 +62,10 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         notaPratica: updatedRow.nota_pratica !== null ? Number(updatedRow.nota_pratica) : undefined,
         modoCertificacao: updatedRow.modo_certificacao || 'TRADICIONAL',
         praticaLiberada,
+        iaStatusConsolidado: updatedRow.ia_status_consolidado || 'NAO_SOLICITADA',
+        iaResultadoConsolidadoJson: updatedRow.ia_resultado_consolidado_json || null,
+        iaFingerprintConsolidada: updatedRow.ia_fingerprint_consolidada || null,
+        iaReanalisePendente: updatedRow.ia_reanalise_pendente || 0,
         createdAt: updatedRow.created_at,
         updatedAt: updatedRow.updated_at
       };

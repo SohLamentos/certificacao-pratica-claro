@@ -5,6 +5,27 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     await initDb(env.DB);
     const url = new URL(request.url);
 
+    // Economy & Admin Indicators
+    const todayStr = new Date().toISOString().split('T')[0];
+    const logsTodayRow = await env.DB.prepare(
+      "SELECT COUNT(*) as cnt FROM ia_analises_logs WHERE ia_requested_at LIKE ?"
+    ).bind(`${todayStr}%`).first() as any;
+    const analisesHoje = logsTodayRow ? logsTodayRow.cnt : 0;
+
+    const totalLogsRow = await env.DB.prepare(`
+      SELECT 
+        COUNT(*) as total, 
+        SUM(CASE WHEN reaproveitada = 1 OR ia_status = 'REAPROVEITADA' OR ia_status = 'CACHE' THEN 1 ELSE 0 END) as hits, 
+        SUM(economia_estimada) as total_savings 
+      FROM ia_analises_logs
+    `).first() as any;
+
+    const totalLogs = totalLogsRow ? totalLogsRow.total : 0;
+    const cacheHits = totalLogsRow && totalLogsRow.hits ? totalLogsRow.hits : 0;
+    const chamadasEvitadas = cacheHits;
+    const taxaCacheHit = totalLogs > 0 ? Math.round((cacheHits / totalLogs) * 100) : 0;
+    const economiaEstimadaUSD = totalLogsRow && totalLogsRow.total_savings ? totalLogsRow.total_savings : 0.0;
+
     // 1. General Metrics
     const totalRow = await env.DB.prepare("SELECT COUNT(*) as cnt FROM ia_decision_history").first() as any;
     const total = totalRow ? totalRow.cnt : 0;
@@ -80,7 +101,11 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
         confirmations,
         corrections,
         accuracy,
-        avgConfidence
+        avgConfidence,
+        analises_hoje: analisesHoje,
+        taxa_cache_hit: taxaCacheHit,
+        chamadas_evitadas: chamadasEvitadas,
+        economia_acumulada_usd: economiaEstimadaUSD
       },
       confidenceStats: {
         high: highConfCount,

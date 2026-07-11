@@ -106,6 +106,8 @@ export default function CertificacaoIAView({
   const [observacaoCq, setObservacaoCq] = useState('');
   const [savingDecision, setSavingDecision] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isConsolidatedRunning, setIsConsolidatedRunning] = useState(false);
+  const [isConfirming, setIsConfirming] = useState(false);
 
   // Human feedback learning states
   const [usarFeedback, setUsarFeedback] = useState(true);
@@ -248,6 +250,138 @@ export default function CertificacaoIAView({
       showToast(err.message || 'Erro ao executar análise IA.', 'error');
     } finally {
       setIsAnalyzing(false);
+    }
+  };
+
+  const handleAnalyzeConsolidated = async (tipo: 'ANALISE_CONSOLIDADA' | 'REANALISE_PARCIAL') => {
+    setIsConsolidatedRunning(true);
+    try {
+      const profile = localStorage.getItem('claro_cq_profile') || 'tecnico';
+      let user_id = 'tecnico-user';
+      let user_nome = 'Técnico';
+
+      if (profile === 'cq') {
+        const saved = localStorage.getItem('claro_cq_selecionado');
+        if (saved) {
+          try {
+            const u = JSON.parse(saved);
+            user_id = u.id || user_id;
+            user_nome = u.nome || user_nome;
+          } catch (e) {}
+        }
+      } else if (profile === 'analista') {
+        const saved = localStorage.getItem('claro_analista_selecionado');
+        if (saved) {
+          try {
+            const u = JSON.parse(saved);
+            user_id = u.id || user_id;
+            user_nome = u.nome || user_nome;
+          } catch (e) {}
+        }
+      }
+
+      let response = await apiFetch('/api/ia/evidencias/analisar-consolidado', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          avaliacao_id: evaluation.id,
+          tipo_analise: tipo,
+          usuario_id: user_id,
+          perfil_usuario: profile
+        })
+      });
+      let resData = await response.json() as any;
+
+      if (response.ok && resData.requires_confirmation) {
+        const confirmed = window.confirm("Esta análise consolidada pode consumir créditos adicionais de IA. Deseja continuar?");
+        if (!confirmed) {
+          showToast('Análise cancelada pelo usuário.', 'info');
+          setIsConsolidatedRunning(false);
+          return;
+        }
+
+        response = await apiFetch('/api/ia/evidencias/analisar-consolidado', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            avaliacao_id: evaluation.id,
+            tipo_analise: tipo,
+            confirmado_pago: true,
+            usuario_id: user_id,
+            perfil_usuario: profile
+          })
+        });
+        resData = await response.json() as any;
+      }
+
+      if (!response.ok || !resData.success) {
+        throw new Error(resData.error || 'Falha ao processar análise consolidada.');
+      }
+
+      const totalReused = resData.total_reaproveitadas || 0;
+      const totalAnalyzed = resData.total_analisadas || 0;
+      const savings = resData.economia_estimada_usd || 0;
+
+      let msg = `Auditoria concluída! ${totalAnalyzed} fotos analisadas.`;
+      if (totalReused > 0) {
+        msg += ` ${totalReused} fotos foram reaproveitadas do cache (Economia: US$ ${savings.toFixed(4)})!`;
+      }
+      showToast(msg, 'success');
+      await fetchEvidenciasData();
+      await onRefresh();
+    } catch (err: any) {
+      showToast(err.message || 'Erro ao rodar auditoria consolidada por IA.', 'error');
+    } finally {
+      setIsConsolidatedRunning(false);
+    }
+  };
+
+  const handleConfirmSuggestions = async () => {
+    setIsConfirming(true);
+    try {
+      const profile = localStorage.getItem('claro_cq_profile') || 'tecnico';
+      let user_id = 'tecnico-user';
+
+      if (profile === 'cq') {
+        const saved = localStorage.getItem('claro_cq_selecionado');
+        if (saved) {
+          try {
+            const u = JSON.parse(saved);
+            user_id = u.id || user_id;
+          } catch (e) {}
+        }
+      } else if (profile === 'analista') {
+        const saved = localStorage.getItem('claro_analista_selecionado');
+        if (saved) {
+          try {
+            const u = JSON.parse(saved);
+            user_id = u.id || user_id;
+          } catch (e) {}
+        }
+      }
+
+      const response = await apiFetch('/api/ia/evidencias/confirmar-sugestoes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          avaliacao_id: evaluation.id,
+          usuario_id: user_id,
+          perfil_usuario: profile
+        })
+      });
+      const resData = await response.json() as any;
+
+      if (!response.ok || !resData.success) {
+        throw new Error(resData.error || 'Falha ao aplicar sugestões.');
+      }
+
+      showToast(`Sugestões consolidadas aplicadas com sucesso! Avaliação finalizada como: ${resData.status_final_avaliacao}`, 'success');
+      await fetchEvidenciasData();
+      await onRefresh();
+    } catch (err: any) {
+      showToast(err.message || 'Erro ao aplicar decisões da IA.', 'error');
+    } finally {
+      setIsConfirming(false);
     }
   };
 
@@ -498,6 +632,198 @@ export default function CertificacaoIAView({
         <div className="flex items-center gap-3">
           {renderStatusBadge(evaluation.status as any)}
         </div>
+      </div>
+
+      {/* Consolidated AI Auditor Panel */}
+      <div className="bg-gradient-to-r from-slate-900 to-slate-800 text-white rounded-3xl p-6 shadow-md border border-slate-700/60 space-y-5">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="bg-red-500 text-white text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded shadow-sm animate-pulse flex items-center gap-1">
+                <Cpu size={10} /> NOVIDADE ECONÔMICA
+              </span>
+              <h2 className="text-md font-black tracking-tight flex items-center gap-1.5 text-white">
+                Auditoria Consolidada por IA
+              </h2>
+            </div>
+            <p className="text-slate-300 text-xs">
+              Evite custos altos processando todas as 7 evidências de uma só vez, com cache inteligente e triagem automatizada contra fraudes.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-2.5">
+            <button
+              type="button"
+              onClick={() => handleAnalyzeConsolidated('ANALISE_CONSOLIDADA')}
+              disabled={isConsolidatedRunning || isConfirming}
+              className="py-2.5 px-4 bg-red-600 hover:bg-red-700 text-white font-extrabold rounded-2xl text-xs flex items-center gap-2 shadow transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isConsolidatedRunning ? (
+                <>
+                  <Loader2 size={14} className="animate-spin text-white" />
+                  <span>Processando...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles size={14} className="text-white" />
+                  <span>Rodar Auditoria Completa</span>
+                </>
+              )}
+            </button>
+
+            {evaluation.iaStatusConsolidado && evaluation.iaStatusConsolidado !== 'NAO_SOLICITADA' && (
+              <button
+                type="button"
+                onClick={() => handleAnalyzeConsolidated('REANALISE_PARCIAL')}
+                disabled={isConsolidatedRunning || isConfirming}
+                className="py-2.5 px-4 bg-slate-700 hover:bg-slate-600 text-slate-200 border border-slate-600 font-extrabold rounded-2xl text-xs flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Reanalisa de forma econômica apenas os itens que sofreram alteração"
+              >
+                <span>Reanálise Parcial</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Evaluation Consolidated Status Detail */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-3 border-t border-slate-700/50 text-xs">
+          <div className="bg-slate-800/50 p-3 rounded-2xl border border-slate-700/30">
+            <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">Status da IA</span>
+            <div className="flex items-center gap-2">
+              <span className={`h-2.5 w-2.5 rounded-full ${
+                evaluation.iaStatusConsolidado === 'CONFIRMADA_CQ' ? 'bg-emerald-500' :
+                evaluation.iaStatusConsolidado === 'PENDENTE_REVISAO_CQ' ? 'bg-purple-500 animate-pulse' :
+                evaluation.iaStatusConsolidado === 'EM_ANALISE' ? 'bg-blue-500 animate-spin' :
+                evaluation.iaStatusConsolidado === 'ERRO' ? 'bg-rose-500' : 'bg-slate-500'
+              }`}></span>
+              <strong className="text-white font-black uppercase">
+                {evaluation.iaStatusConsolidado ? evaluation.iaStatusConsolidado.replace(/_/g, ' ') : 'NÃO INICIADA'}
+              </strong>
+            </div>
+          </div>
+
+          <div className="bg-slate-800/50 p-3 rounded-2xl border border-slate-700/30">
+            <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">Fingerprint de Segurança</span>
+            <span className="font-mono text-[10px] text-slate-300 truncate block">
+              {evaluation.iaFingerprintConsolidada ? `${evaluation.iaFingerprintConsolidada.substring(0, 16)}...` : 'Nenhum gerado'}
+            </span>
+          </div>
+
+          {(() => {
+            let parsedConsolidated: any = null;
+            if (evaluation.iaResultadoConsolidadoJson) {
+              try { parsedConsolidated = JSON.parse(evaluation.iaResultadoConsolidadoJson); } catch {}
+            }
+            const savings = parsedConsolidated?.economia_estimada_usd || 0;
+            const reusedCount = parsedConsolidated?.reaproveitadas_count || 0;
+            return (
+              <>
+                <div className="bg-slate-800/50 p-3 rounded-2xl border border-slate-700/30">
+                  <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">Itens Reutilizados (Cache)</span>
+                  <strong className="text-emerald-400 text-sm font-black">{reusedCount} de 7</strong>
+                </div>
+
+                <div className="bg-slate-800/50 p-3 rounded-2xl border border-slate-700/30">
+                  <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">Economia Acumulada</span>
+                  <strong className="text-emerald-400 text-sm font-black">
+                    {savings > 0 ? `US$ ${savings.toFixed(4)}` : 'US$ 0.0000'}
+                  </strong>
+                </div>
+              </>
+            );
+          })()}
+        </div>
+
+        {/* Suggestion Review Board for human revision */}
+        {evaluation.iaStatusConsolidado === 'PENDENTE_REVISAO_CQ' && evaluation.iaResultadoConsolidadoJson && (() => {
+          let parsed: any = null;
+          try { parsed = JSON.parse(evaluation.iaResultadoConsolidadoJson); } catch {}
+          
+          if (parsed && parsed.analises_missoes) {
+            const listMissoes = Object.values(parsed.analises_missoes) as any[];
+            return (
+              <div className="bg-slate-900 border border-slate-700 rounded-2xl p-5 mt-4 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
+                  <div className="space-y-0.5">
+                    <strong className="text-sm text-white font-extrabold block">Revisão de Sugestões da IA</strong>
+                    <p className="text-[11px] text-slate-400">
+                      O modelo analisou as fotos e preencheu as conformidades abaixo. Revise os julgamentos antes de salvar.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleConfirmSuggestions}
+                    disabled={isConfirming}
+                    className="py-2 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow cursor-pointer transition-all disabled:opacity-50 flex items-center gap-1.5"
+                  >
+                    {isConfirming ? (
+                      <>
+                        <Loader2 size={12} className="animate-spin text-white" />
+                        <span>Aplicando...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle size={12} className="text-white" />
+                        <span>Confirmar e Aplicar Tudo</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {listMissoes.map((mRes: any) => {
+                    const hasLGPD = mRes.risco_lgpd === 'ALTO';
+                    return (
+                      <div key={mRes.missao_id} className="bg-slate-850 p-4 rounded-xl border border-slate-800 space-y-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <h4 className="text-xs font-extrabold text-slate-200 truncate">{mRes.nome_missao}</h4>
+                            <span className="text-[10px] text-slate-400">Status: {mRes.status}</span>
+                          </div>
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${
+                            mRes.status === 'SEM_EVIDENCIA' ? 'bg-slate-800 text-slate-500' :
+                            mRes.aprovada ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                          }`}>
+                            {mRes.status === 'SEM_EVIDENCIA' ? 'SEM FOTO' : mRes.aprovada ? 'CONFORME' : 'NÃO CONFORME'}
+                          </span>
+                        </div>
+
+                        {mRes.status !== 'SEM_EVIDENCIA' && (
+                          <>
+                            <p className="text-[11px] text-slate-300 leading-relaxed font-medium">
+                              "{mRes.justificativa || 'Sem observações'}"
+                            </p>
+
+                            {hasLGPD && (
+                              <div className="flex items-start gap-1.5 p-2 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-lg text-[10px]">
+                                <ShieldAlert size={12} className="text-amber-500 shrink-0 mt-0.5" />
+                                <div>
+                                  <strong>Risco LGPD Detectado</strong>
+                                  <p className="text-[9px] text-slate-400 mt-0.5">Tipos: {mRes.risco_lgpd_tipos?.join(', ') || 'Rostos/Documentos'}</p>
+                                </div>
+                              </div>
+                            )}
+
+                            {mRes.imagem_utilizada?.imagem_repetida === 1 && (
+                              <div className="flex items-start gap-1.5 p-2 bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg text-[10px]">
+                                <AlertTriangle size={12} className="text-red-500 shrink-0 mt-0.5" />
+                                <div>
+                                  <strong>Evidência Reutilizada</strong>
+                                  <p className="text-[9px] text-slate-400 mt-0.5">Alerta de duplicidade detectado em outro agendamento.</p>
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          }
+          return null;
+        })()}
       </div>
 
       {/* Main Grid View */}

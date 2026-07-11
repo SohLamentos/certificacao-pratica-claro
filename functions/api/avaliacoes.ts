@@ -90,6 +90,10 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
         notaTeorica: row.nota_teorica !== null ? Number(row.nota_teorica) : undefined,
         notaPratica: row.nota_pratica !== null ? Number(row.nota_pratica) : undefined,
         modoCertificacao: row.modo_certificacao || 'TRADICIONAL',
+        iaStatusConsolidado: row.ia_status_consolidado || 'NAO_SOLICITADA',
+        iaResultadoConsolidadoJson: row.ia_resultado_consolidado_json || null,
+        iaFingerprintConsolidada: row.ia_fingerprint_consolidada || null,
+        iaReanalisePendente: row.ia_reanalise_pendente || 0,
         createdAt: row.created_at,
         updatedAt: row.updated_at
       };

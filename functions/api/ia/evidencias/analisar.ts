@@ -2,6 +2,7 @@ import { initDb, Env, jsonResponse } from '../../_db';
 import { getAppConfig } from '../../_config';
 import { logEvent, LogLevel } from '../../_logger';
 import { GoogleGenAI, Type } from '@google/genai';
+import { calculateQualityScore } from '../../_economy_engine';
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   let binary = '';
@@ -94,12 +95,78 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     // 3. Obter ou calcular o hash do arquivo
     let ia_hash_arquivo = evidence.ia_hash_arquivo;
     if (!ia_hash_arquivo) {
-      const hashInput = `${evidence.arquivo_key}-${evidence.tamanho_final || 0}`;
+      const hashInput = `${evidence.arquivo_key}-${evidence.tamanho_final || evidence.tamanho || 0}`;
       const encoder = new TextEncoder();
       const dataBuffer = encoder.encode(hashInput);
       const hashBuffer = await crypto.subtle.digest('SHA-256', dataBuffer);
       const hashArray = Array.from(new Uint8Array(hashBuffer));
       ia_hash_arquivo = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    // --- CENTRAL ECONOMY ENGINE RULES INTEGRATION ---
+    // Rule 4 & 6: Quality Score & Invalid checking
+    const qScore = calculateQualityScore({
+      image_hash: ia_hash_arquivo,
+      tamanho_original: evidence.tamanho_final || evidence.tamanho || 100000,
+      largura: evidence.largura,
+      altura: evidence.altura,
+      mime_type: evidence.tipo_arquivo
+    });
+
+    if (qScore < 20) {
+      // Mark as rejected immediately due to poor technical quality
+      const rejectJustificativa = `REPROVADO AUTOMATICAMENTE: Evidência técnica com qualidade inadequada (score: ${qScore}/100). Verifique se a foto possui boa iluminação, foco adequado, formato válido e resolução mínima.`;
+      
+      await env.DB.prepare(`
+        UPDATE ia_evidencias
+        SET status_ia = 'REPROVADO_IA',
+            resultado_ia = 'REPROVADO',
+            confianca_ia = 1.0,
+            justificativa_ia = ?,
+            ia_hash_arquivo = ?,
+            ia_origem = 'SISTEMA_REJEICAO',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).bind(rejectJustificativa, ia_hash_arquivo, evidencia_id).run();
+
+      await logEvent(env, {
+        tipo: LogLevel.WARNING,
+        evento: `Evidência técnica rejeitada por baixa qualidade técnica (Score: ${qScore})`,
+        usuario_id: finalUserId,
+        perfil: finalPerfil,
+        ip: clientIp,
+        userAgent,
+        metadata: { evidencia_id, score: qScore }
+      });
+
+      const updatedRecord = await env.DB.prepare("SELECT * FROM ia_evidencias WHERE id = ?").bind(evidencia_id).first() as any;
+      return jsonResponse({
+        success: true,
+        reused: false,
+        evidence: updatedRecord
+      });
+    }
+
+    // Rule 5: Duplication check (external duplicate fraud warning)
+    const countOtherEvs = await env.DB.prepare(
+      "SELECT COUNT(DISTINCT avaliacao_id) as cnt FROM evidencias WHERE image_hash = ? AND avaliacao_id != ? AND arquivo_excluido = 0"
+    ).bind(ia_hash_arquivo, evidence.certificacao_id).first() as any;
+
+    const countOtherIaEvs = await env.DB.prepare(
+      "SELECT COUNT(DISTINCT certificacao_id) as cnt FROM ia_evidencias WHERE ia_hash_arquivo = ? AND certificacao_id != ?"
+    ).bind(ia_hash_arquivo, evidence.certificacao_id).first() as any;
+
+    const otherCount = (countOtherEvs?.cnt || 0) + (countOtherIaEvs?.cnt || 0);
+    let duplicateAlert = "";
+    if (otherCount > 0) {
+      duplicateAlert = `Possível Reuso de Evidência: Esta mesma foto já foi enviada em ${otherCount} outra(s) avaliação(ões) distinta(s)!`;
+      await env.DB.prepare(`
+        UPDATE ia_evidencias
+        SET imagem_repetida = 1,
+            imagem_repetida_alerta = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).bind(duplicateAlert, evidencia_id).run();
     }
 
     // 4. Se já existir análise para o mesmo hash, reutilizar resultado (Reuso de análise, custo zero)

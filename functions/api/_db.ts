@@ -2,6 +2,7 @@ import { runInitialMigration } from './migrations/0001_initial_schema';
 import { runIncrementalMigration } from './migrations/0002_add_mission_config_columns';
 import { runRetentionMigration } from './migrations/0003_add_retention_columns';
 import { runOperationalSupportMigration } from './migrations/0004_add_operational_support_tables';
+import { runConsolidatedFieldsMigration } from './migrations/0005_add_consolidated_fields';
 import { Logger } from './_logger';
 
 export interface Env {
@@ -39,6 +40,10 @@ export interface Env {
   ENABLE_CONFIDENCE_SCORE?: string | boolean;
   ENABLE_EVIDENCE_PORTAL?: string | boolean;
   ENABLE_EVIDENCE_AI?: string | boolean;
+  ENABLE_CONSOLIDATED_AI_ANALYSIS?: string | boolean;
+  ENABLE_PARTIAL_AI_REANALYSIS?: string | boolean;
+  ENABLE_AI_RESULT_REUSE?: string | boolean;
+  ENABLE_AI_COST_CONFIRMATION?: string | boolean;
   ENABLE_LGPD_RISK_SCAN?: string | boolean;
   ENABLE_PROTECTED_PREVIEW?: string | boolean;
   ENABLE_FACE_CONSISTENCY_CHECK?: string | boolean;
@@ -61,6 +66,7 @@ export async function initDb(db: D1Database): Promise<void> {
     await runIncrementalMigration(db);
     await runRetentionMigration(db);
     await runOperationalSupportMigration(db);
+    await runConsolidatedFieldsMigration(db);
 
     // Ensure new tables are created for evolution
     await db.prepare(`

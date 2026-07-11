@@ -43,6 +43,10 @@ export function getAppConfig(env: Env) {
     // New requested feature flags (Requirement 25)
     ENABLE_EVIDENCE_PORTAL: getFeatureFlag(env, 'ENABLE_EVIDENCE_PORTAL', true),
     ENABLE_EVIDENCE_AI: getFeatureFlag(env, 'ENABLE_EVIDENCE_AI', false),
+    ENABLE_CONSOLIDATED_AI_ANALYSIS: getFeatureFlag(env, 'ENABLE_CONSOLIDATED_AI_ANALYSIS', false),
+    ENABLE_PARTIAL_AI_REANALYSIS: getFeatureFlag(env, 'ENABLE_PARTIAL_AI_REANALYSIS', false),
+    ENABLE_AI_RESULT_REUSE: getFeatureFlag(env, 'ENABLE_AI_RESULT_REUSE', true),
+    ENABLE_AI_COST_CONFIRMATION: getFeatureFlag(env, 'ENABLE_AI_COST_CONFIRMATION', true),
     ENABLE_LGPD_RISK_SCAN: getFeatureFlag(env, 'ENABLE_LGPD_RISK_SCAN', false),
     ENABLE_PROTECTED_PREVIEW: getFeatureFlag(env, 'ENABLE_PROTECTED_PREVIEW', false),
     ENABLE_FACE_CONSISTENCY_CHECK: getFeatureFlag(env, 'ENABLE_FACE_CONSISTENCY_CHECK', false),
