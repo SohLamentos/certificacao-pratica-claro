@@ -135,6 +135,18 @@ export async function initDb(db: D1Database): Promise<void> {
       // Column already exists, ignore
     }
 
+    // Safely add permite_reuso_mesma_imagem column to missoes_evidencias if it doesn't exist
+    try {
+      const infoMissions = await db.prepare("PRAGMA table_info(missoes_evidencias)").all() as { results: any[] };
+      const hasPermiteReuso = infoMissions.results && infoMissions.results.some((col: any) => col.name === 'permite_reuso_mesma_imagem');
+      if (!hasPermiteReuso) {
+        await db.prepare("ALTER TABLE missoes_evidencias ADD COLUMN permite_reuso_mesma_imagem INTEGER DEFAULT 0").run();
+        Logger.info("Coluna 'permite_reuso_mesma_imagem' adicionada com sucesso à tabela missoes_evidencias.");
+      }
+    } catch (err: any) {
+      Logger.error(`Erro ao verificar/adicionar coluna permite_reuso_mesma_imagem: ${err.message || err}`);
+    }
+
     // Safely add image_signature column to ia_evidencias if it doesn't exist (using PRAGMA table_info verification)
     try {
       const info = await db.prepare("PRAGMA table_info(ia_evidencias)").all() as { results: any[] };

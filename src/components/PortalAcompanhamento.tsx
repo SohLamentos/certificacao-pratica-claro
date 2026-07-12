@@ -53,6 +53,12 @@ export default function PortalAcompanhamento() {
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<TrackerItem[]>([]);
   
+  // Inconsistency Migration and Correction States
+  const [inconsistenciesCount, setInconsistenciesCount] = useState<number | null>(null);
+  const [inconsistentRecords, setInconsistentRecords] = useState<any[]>([]);
+  const [correcting, setCorrecting] = useState<boolean>(false);
+  const [showCorrectionModal, setShowCorrectionModal] = useState<boolean>(false);
+
   // Filters & Search
   const [searchInputValue, setSearchInputValue] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -163,9 +169,51 @@ export default function PortalAcompanhamento() {
     }
   };
 
+  const fetchInconsistencies = async () => {
+    try {
+      const res = await apiFetch('/api/evidencias/portal/migration-correction');
+      if (res.ok) {
+        const json = await res.json() as any;
+        if (json.success) {
+          setInconsistenciesCount(json.count);
+          setInconsistentRecords(json.records || []);
+        }
+      }
+    } catch (err) {
+      console.error("Error fetching inconsistencies", err);
+    }
+  };
+
+  const executeCorrection = async () => {
+    setCorrecting(true);
+    try {
+      const res = await apiFetch('/api/evidencias/portal/migration-correction', {
+        method: 'POST'
+      });
+      if (res.ok) {
+        const json = await res.json() as any;
+        if (json.success) {
+          showToast(json.message || 'Portais corrigidos com sucesso!', 'success');
+          setInconsistenciesCount(0);
+          setInconsistentRecords([]);
+          setShowCorrectionModal(false);
+          const range = calculateRange(dateOption);
+          await fetchTrackerData(true, range.start, range.end);
+        } else {
+          showToast(json.error || 'Erro ao executar correção', 'error');
+        }
+      }
+    } catch (err) {
+      showToast('Erro de rede ao executar correção', 'error');
+    } finally {
+      setCorrecting(false);
+    }
+  };
+
   useEffect(() => {
     const range = calculateRange('proximos_30');
     fetchTrackerData(false, range.start, range.end);
+    fetchInconsistencies();
     return () => {
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
@@ -355,6 +403,80 @@ export default function PortalAcompanhamento() {
           </h2>
         </div>
       </div>
+
+      {/* Inconsistencies warning banner */}
+      {inconsistenciesCount !== null && inconsistenciesCount > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-fade-in">
+          <div className="flex gap-3">
+            <AlertTriangle className="text-amber-600 shrink-0 mt-0.5" size={18} />
+            <div>
+              <h4 className="text-xs font-bold text-amber-900">Inconsistências de Regra de Negócio Detectadas</h4>
+              <p className="text-[11px] text-amber-700 mt-0.5">
+                Foram identificados <strong>{inconsistenciesCount}</strong> portais de evidências marcados incorretamente como encerrados/concluídos enquanto as avaliações ainda estão abertas.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowCorrectionModal(true)}
+            className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-[11px] font-bold transition-all shadow-xs cursor-pointer shrink-0"
+          >
+            Visualizar e Corrigir
+          </button>
+        </div>
+      )}
+
+      {/* Inconsistencies Correction Modal */}
+      {showCorrectionModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 max-w-lg w-full p-6 shadow-xl animate-scale-up space-y-4 text-left">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2 text-amber-600">
+                <AlertTriangle size={18} />
+                <h3 className="font-bold text-slate-900 text-sm">Portais para Correção Higiênica</h3>
+              </div>
+              <button onClick={() => setShowCorrectionModal(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+                <X size={16} />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Os registros listados abaixo foram encerrados de forma prematura e indevida somente porque o técnico enviou todas as fotos. 
+              Ao aplicar a correção, eles retornarão ao estado correto (<strong>AGUARDANDO_ANALISE</strong>), permitindo a revisão operacional normal e mantendo as avaliações <strong>AGENDADAS</strong>.
+            </p>
+
+            <div className="max-h-48 overflow-y-auto border border-slate-100 rounded-xl p-2 bg-slate-50 space-y-1.5">
+              {inconsistentRecords.map((rec, idx) => (
+                <div key={idx} className="flex items-center justify-between text-[11px] p-2 bg-white rounded-lg border border-slate-100">
+                  <div>
+                    <p className="font-bold text-slate-800">{rec.nome_tecnico}</p>
+                    <p className="text-[10px] text-slate-500">Data: {rec.data_avaliacao} | Id: {rec.avaliacao_id}</p>
+                  </div>
+                  <span className="px-2 py-0.5 bg-rose-50 text-rose-700 border border-rose-100 rounded-md font-bold text-[9px]">
+                    {rec.portal_status}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex justify-end gap-2.5 pt-2 border-t border-slate-100">
+              <button
+                onClick={() => setShowCorrectionModal(false)}
+                className="px-4 py-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={executeCorrection}
+                disabled={correcting}
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-2 cursor-pointer"
+              >
+                {correcting && <Loader2 size={13} className="animate-spin" />}
+                <span>Aplicar Correção em {inconsistenciesCount} Registros</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Filter and Search Bar Row */}
       <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4 shadow-xs">

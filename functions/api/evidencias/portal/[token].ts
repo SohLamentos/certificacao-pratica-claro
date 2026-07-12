@@ -867,7 +867,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       return jsonResponse({ success: false, error: "Portal não encontrado ou inválido" }, 404);
     }
 
-    const isClosed = portal.status !== "LIBERADO" && portal.status !== "EM_ENVIO";
+    const isClosed = portal.status === "BLOQUEADO" || portal.status === "EXPIRADO" || portal.status.startsWith("ENCERRADO_");
     const nowStr = new Date().toISOString();
 
     const data = await request.json() as any;
@@ -1148,6 +1148,98 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         if (duplicateRow.avaliacao_id !== portal.avaliacao_id) {
           repetida = 1;
           repetida_avaliacao_id = duplicateRow.avaliacao_id;
+
+          // Log Case C audit event: IMAGEM_REPETIDA_OUTRA_AVALIACAO
+          await logEvent(env, {
+            tipo: LogLevel.WARNING,
+            evento: "IMAGEM_REPETIDA_OUTRA_AVALIACAO",
+            usuario_id: "tecnico",
+            perfil: "tecnico",
+            ip: clientIp,
+            userAgent,
+            metadata: {
+              portal_id: portal.id,
+              avaliacao_id: portal.avaliacao_id,
+              missao_id: missaoId,
+              image_hash,
+              repetida_avaliacao_id: duplicateRow.avaliacao_id
+            }
+          });
+        } else {
+          // Case B: Same evaluation, different mission, same hash
+          // Let's identify the other mission
+          const otherEvidence = await env.DB.prepare(
+            "SELECT missao_id FROM evidencias WHERE image_hash = ? AND avaliacao_id = ? LIMIT 1"
+          ).bind(image_hash, portal.avaliacao_id).first() as any;
+
+          if (otherEvidence && otherEvidence.missao_id !== missaoId) {
+            // Check permits for current and other mission
+            const currentMissionConf = await env.DB.prepare(
+              "SELECT permite_reuso_mesma_imagem FROM missoes_evidencias WHERE id = ?"
+            ).bind(missaoId).first() as any;
+
+            const otherMissionConf = await env.DB.prepare(
+              "SELECT permite_reuso_mesma_imagem FROM missoes_evidencias WHERE id = ?"
+            ).bind(otherEvidence.missao_id).first() as any;
+
+            const allowsReuse = (currentMissionConf?.permite_reuso_mesma_imagem === 1) && (otherMissionConf?.permite_reuso_mesma_imagem === 1);
+
+            if (!allowsReuse) {
+              await logEvent(env, {
+                tipo: LogLevel.WARNING,
+                evento: "IMAGEM_REPETIDA_ENTRE_MISSOES",
+                usuario_id: "tecnico",
+                perfil: "tecnico",
+                ip: clientIp,
+                userAgent,
+                metadata: {
+                  portal_id: portal.id,
+                  avaliacao_id: portal.avaliacao_id,
+                  image_hash,
+                  current_missao_id: missaoId,
+                  previous_missao_id: otherEvidence.missao_id
+                }
+              });
+
+              await logEvent(env, {
+                tipo: LogLevel.AUDITORIA,
+                evento: "REUSO_ENTRE_MISSOES_BLOQUEADO",
+                usuario_id: "tecnico",
+                perfil: "tecnico",
+                ip: clientIp,
+                userAgent,
+                metadata: {
+                  portal_id: portal.id,
+                  avaliacao_id: portal.avaliacao_id,
+                  image_hash,
+                  current_missao_id: missaoId,
+                  previous_missao_id: otherEvidence.missao_id
+                }
+              });
+
+              return jsonResponse({
+                success: false,
+                error: "Esta mesma foto já foi utilizada em outra missão. Envie uma evidência específica para esta atividade."
+              }, 400);
+            } else {
+              // Log authorized reuse event
+              await logEvent(env, {
+                tipo: LogLevel.AUDITORIA,
+                evento: "REUSO_ENTRE_MISSOES_AUTORIZADO",
+                usuario_id: "tecnico",
+                perfil: "tecnico",
+                ip: clientIp,
+                userAgent,
+                metadata: {
+                  portal_id: portal.id,
+                  avaliacao_id: portal.avaliacao_id,
+                  image_hash,
+                  current_missao_id: missaoId,
+                  previous_missao_id: otherEvidence.missao_id
+                }
+              });
+            }
+          }
         }
       } else {
         const fileExt = mime_type.split('/')[1] || 'webp';
@@ -1417,24 +1509,52 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     if (action === "finalize") {
       await env.DB.prepare(`
          UPDATE portais_evidencias
-         SET status = 'EVIDENCIAS_ENVIADAS',
-             encerrado_em = ?,
-             encerrado_motivo = 'Envio finalizado pelo técnico',
+         SET status = 'AGUARDANDO_ANALISE',
+             encerrado_em = NULL,
+             encerrado_motivo = NULL,
              updated_at = ?
          WHERE id = ?
-       `).bind(nowStr, nowStr, portal.id).run();
+       `).bind(nowStr, portal.id).run();
 
       const avaliacao = await env.DB.prepare(
         "SELECT id, status FROM avaliacoes WHERE id = ?"
       ).bind(portal.avaliacao_id).first() as any;
 
-      if (avaliacao && (avaliacao.status === "EM_ANDAMENTO" || avaliacao.status === "AGENDADO")) {
+      if (avaliacao && (avaliacao.status === "EM_ANDAMENTO" || avaliacao.status === "AGENDADO" || avaliacao.status === "AGENDADA")) {
         await env.DB.prepare(`
            UPDATE avaliacoes
-           SET status = 'AGUARDANDO_ANALISE', updated_at = CURRENT_TIMESTAMP
+           SET status = 'AGUARDANDO_RESULTADO', updated_at = CURRENT_TIMESTAMP
            WHERE id = ?
          `).bind(portal.avaliacao_id).run();
       }
+
+      await logEvent(env, {
+        tipo: LogLevel.AUDITORIA,
+        evento: "EVIDENCIAS_ENVIO_COMPLETO",
+        usuario_id: "tecnico",
+        perfil: "tecnico",
+        ip: clientIp,
+        userAgent,
+        metadata: {
+          avaliacao_id: portal.avaliacao_id,
+          portal_id: portal.id
+        }
+      });
+
+      await logEvent(env, {
+        tipo: LogLevel.AUDITORIA,
+        evento: "PORTAL_STATUS_ATUALIZADO",
+        usuario_id: "tecnico",
+        perfil: "tecnico",
+        ip: clientIp,
+        userAgent,
+        metadata: {
+          portal_id: portal.id,
+          old_status: portal.status,
+          new_status: "AGUARDANDO_ANALISE",
+          reason: "Envio finalizado pelo técnico"
+        }
+      });
 
       await logEvent(env, {
         tipo: LogLevel.AUDITORIA,

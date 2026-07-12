@@ -52,7 +52,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       return jsonResponse({ success: false, error: "Portal não encontrado ou inválido" }, 404);
     }
 
-    const isClosed = portal.status !== "LIBERADO" && portal.status !== "EM_ENVIO";
+    const isClosed = portal.status === "BLOQUEADO" || portal.status === "EXPIRADO" || portal.status.startsWith("ENCERRADO_");
     if (isClosed) {
       return jsonResponse({
         success: false,
@@ -230,12 +230,66 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
     // Case 2: Same evaluation, different mission, same hash
     const sameEvalHash = await env.DB.prepare(`
-      SELECT r2_key, id FROM evidencias
+      SELECT r2_key, id, missao_id FROM evidencias
       WHERE avaliacao_id = ? AND image_hash = ? AND r2_key IS NOT NULL AND r2_key != ''
       LIMIT 1
     `).bind(portal.avaliacao_id, imageHash).first() as any;
 
     if (sameEvalHash) {
+      // Query permite_reuso_mesma_imagem for both missions
+      const currentMissionConf = await env.DB.prepare(
+        "SELECT permite_reuso_mesma_imagem FROM missoes_evidencias WHERE id = ?"
+      ).bind(missaoId).first() as any;
+
+      const otherMissionConf = await env.DB.prepare(
+        "SELECT permite_reuso_mesma_imagem FROM missoes_evidencias WHERE id = ?"
+      ).bind(sameEvalHash.missao_id).first() as any;
+
+      const allowsReuse = (currentMissionConf?.permite_reuso_mesma_imagem === 1) && (otherMissionConf?.permite_reuso_mesma_imagem === 1);
+
+      if (!allowsReuse) {
+        // Register duplicate block attempt in audit log
+        await logEvent(env, {
+          tipo: LogLevel.WARNING,
+          evento: "IMAGEM_REPETIDA_ENTRE_MISSOES",
+          usuario_id: "tecnico",
+          perfil: "tecnico",
+          ip: clientIp,
+          userAgent,
+          metadata: {
+            portal_id: portal.id,
+            avaliacao_id: portal.avaliacao_id,
+            image_hash: imageHash,
+            current_missao_id: missaoId,
+            previous_missao_id: sameEvalHash.missao_id,
+            allows_reuse_current: currentMissionConf?.permite_reuso_mesma_imagem,
+            allows_reuse_other: otherMissionConf?.permite_reuso_mesma_imagem
+          }
+        });
+
+        await logEvent(env, {
+          tipo: LogLevel.AUDITORIA,
+          evento: "REUSO_ENTRE_MISSOES_BLOQUEADO",
+          usuario_id: "tecnico",
+          perfil: "tecnico",
+          ip: clientIp,
+          userAgent,
+          metadata: {
+            portal_id: portal.id,
+            avaliacao_id: portal.avaliacao_id,
+            image_hash: imageHash,
+            current_missao_id: missaoId,
+            previous_missao_id: sameEvalHash.missao_id
+          }
+        });
+
+        return jsonResponse({
+          success: false,
+          error: "Esta mesma foto já foi utilizada em outra missão. Envie uma evidência específica para esta atividade."
+        }, 400);
+      }
+
+      // If authorized, create logical reference
       const preflightToken = await generatePreflightToken(env, {
         portal_id: portal.id,
         avaliacao_id: portal.avaliacao_id,
@@ -250,6 +304,22 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         tamanho_final: tamanhoFinal,
         largura,
         altura
+      });
+
+      await logEvent(env, {
+        tipo: LogLevel.AUDITORIA,
+        evento: "REUSO_ENTRE_MISSOES_AUTORIZADO",
+        usuario_id: "tecnico",
+        perfil: "tecnico",
+        ip: clientIp,
+        userAgent,
+        metadata: {
+          portal_id: portal.id,
+          avaliacao_id: portal.avaliacao_id,
+          image_hash: imageHash,
+          current_missao_id: missaoId,
+          previous_missao_id: sameEvalHash.missao_id
+        }
       });
 
       await logEvent(env, {
@@ -304,7 +374,23 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         altura
       });
 
-      // Register internal reuse alert: IMAGEM_REPETIDA_DETECTADA (Requirement 3)
+      // Register internal reuse alert: IMAGEM_REPETIDA_OUTRA_AVALIACAO (Requirement 3)
+      await logEvent(env, {
+        tipo: LogLevel.WARNING,
+        evento: "IMAGEM_REPETIDA_OUTRA_AVALIACAO",
+        usuario_id: "tecnico",
+        perfil: "tecnico",
+        ip: clientIp,
+        userAgent,
+        metadata: {
+          portal_id: portal.id,
+          avaliacao_id: portal.avaliacao_id,
+          missao_id: missaoId,
+          image_hash: imageHash,
+          repetida_avaliacao_id: otherEvalHash.avaliacao_id
+        }
+      });
+
       await logEvent(env, {
         tipo: LogLevel.WARNING,
         evento: "IMAGEM_REPETIDA_DETECTADA",

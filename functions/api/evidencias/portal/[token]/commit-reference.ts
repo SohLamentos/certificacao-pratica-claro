@@ -98,9 +98,23 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       return jsonResponse({ success: false, error: "Portal inválido ou divergente" }, 400);
     }
 
-    const isClosed = portal.status !== "LIBERADO" && portal.status !== "EM_ENVIO";
+    const isClosed = portal.status === "BLOQUEADO" || portal.status === "EXPIRADO" || portal.status.startsWith("ENCERRADO_");
     if (isClosed) {
       return jsonResponse({ success: false, error: "Portal fechado para modificações." }, 403);
+    }
+
+    const avaliacao = await env.DB.prepare(
+      "SELECT id, status FROM avaliacoes WHERE id = ?"
+    ).bind(portal.avaliacao_id).first() as any;
+
+    if (!avaliacao) {
+      return jsonResponse({ success: false, error: "Avaliação relacionada não encontrada." }, 404);
+    }
+
+    const evalStatus = String(avaliacao.status).toUpperCase();
+    const finishedStatuses = ["APROVADA", "APROVADO", "REPROVADA", "REPROVADO", "CANCELADA", "CANCELADO", "NO_SHOW", "NOSHOW", "NO-SHOW"];
+    if (finishedStatuses.includes(evalStatus)) {
+      return jsonResponse({ success: false, error: "A avaliação relacionada já foi concluída/fechada." }, 400);
     }
 
     // 3. Verify physical file exists in image_ref_counts
