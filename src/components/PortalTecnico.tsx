@@ -248,6 +248,19 @@ export function formatDiasRestantes(dataAvaliacao?: string): string {
   }
 }
 
+async function calculateSha256(base64String: string): Promise<string> {
+  const base64Data = base64String.includes(',') ? base64String.split(',')[1] : base64String;
+  const binaryString = atob(base64Data);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  const hashBuffer = await window.crypto.subtle.digest('SHA-256', bytes);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 export default function PortalTecnico({ token }: PortalTecnicoProps) {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [sessionHash, setSessionHash] = useState<string>('');
@@ -270,6 +283,7 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
   // UI States
   const [expandedMission, setExpandedMission] = useState<string | null>(null);
   const [uploadingMissionId, setUploadingMissionId] = useState<string | null>(null);
+  const [uploadStatusText, setUploadStatusText] = useState<string>("Comprimindo e enviando foto de forma segura...");
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [showSuccessScreen, setShowSuccessScreen] = useState<boolean>(false);
   
@@ -469,12 +483,71 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
 
     setUploadingMissionId(missionId);
     setErrorMsg(null);
+    setUploadStatusText("Preparando e otimizando a imagem...");
 
     try {
       // 1. Process and compress client-side (strips EXIF automatically)
       const processed = await processAndCompressImage(file);
 
-      // 2. Upload Base64 bytes
+      // 2. Calculate SHA-256 hash (Requirement 1 & 2)
+      setUploadStatusText("Calculando assinatura digital de segurança...");
+      const imageHash = await calculateSha256(processed.base64);
+
+      // 3. Consult pre-validation endpoint (Requirement 3)
+      setUploadStatusText("Verificando se a foto já foi enviada...");
+      const preflightRes = await apiFetch(`/api/evidencias/portal/${currentToken}/preflight`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          avaliacaoId: evaluation?.id || portal?.id,
+          missaoId: missionId,
+          imageHash,
+          mimeType: "image/jpeg",
+          tamanhoFinal: processed.size,
+          largura: processed.width,
+          altura: processed.height
+        })
+      });
+
+      if (!preflightRes.ok) {
+        const errorData = await preflightRes.json() as any;
+        alert(errorData.error || "Erro de validação preliminar do arquivo.");
+        return;
+      }
+
+      const preflightData = await preflightRes.json() as any;
+      const { action, preflightToken } = preflightData.data || {};
+
+      if (action === "REUSE_EXISTING_EVIDENCE") {
+        // Case 1: Already exists in the current evaluation + mission
+        setUploadStatusText("Foto já registrada! Atualizando dados...");
+        await loadPortalDataForToken(currentToken, undefined, true);
+        return;
+      }
+
+      if (action === "CREATE_LOGICAL_REFERENCE" || action === "UPLOAD_WITH_REUSE_ALERT") {
+        // Case 2 or 3: Deduplication triggered. Commit logic reference only (Requirements 4, 5, 8, 9)
+        setUploadStatusText("Registrando referência segura...");
+        const commitRes = await apiFetch(`/api/evidencias/portal/${currentToken}/commit-reference`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            preflightToken
+          })
+        });
+
+        if (!commitRes.ok) {
+          const commitErr = await commitRes.json() as any;
+          alert(commitErr.error || "Não foi possível concluir o registro de referência lógica.");
+          return;
+        }
+
+        await loadPortalDataForToken(currentToken, undefined, true);
+        return;
+      }
+
+      // Case 4: Complete physical upload required (Requirement 6)
+      setUploadStatusText("Enviando arquivo físico de imagem...");
       const res = await apiFetch(`/api/evidencias/portal/${currentToken}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -487,7 +560,8 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
           tamanho_final: processed.size,
           largura: processed.width,
           altura: processed.height,
-          sessionHash
+          sessionHash,
+          preflightToken
         })
       });
 
@@ -1208,7 +1282,7 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
                       {uploadingMissionId === m.id && (
                         <div className="flex items-center justify-center gap-2 bg-slate-950/75 p-3 rounded-xl border border-slate-800/50">
                           <Loader2 className="w-4 h-4 text-red-500 animate-spin" />
-                          <p className="text-xs text-red-400 font-semibold">Comprimindo e enviando foto de forma segura...</p>
+                          <p className="text-xs text-red-400 font-semibold">{uploadStatusText}</p>
                         </div>
                       )}
                     </div>

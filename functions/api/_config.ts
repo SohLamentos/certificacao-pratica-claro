@@ -52,6 +52,7 @@ export function getAppConfig(env: Env) {
     ENABLE_FACE_CONSISTENCY_CHECK: getFeatureFlag(env, 'ENABLE_FACE_CONSISTENCY_CHECK', false),
     ENABLE_EVIDENCE_THUMBNAILS: getFeatureFlag(env, 'ENABLE_EVIDENCE_THUMBNAILS', true),
     ENABLE_EVIDENCE_RETENTION: getFeatureFlag(env, 'ENABLE_EVIDENCE_RETENTION', true),
+    ENABLE_PREUPLOAD_DEDUPLICATION: getFeatureFlag(env, 'ENABLE_PREUPLOAD_DEDUPLICATION', true),
 
     // Limits
     MAX_ANALISES_IA_DIA: getNumericEnv(env, 'MAX_ANALISES_IA_DIA', 50),

@@ -49,6 +49,7 @@ export interface Env {
   ENABLE_FACE_CONSISTENCY_CHECK?: string | boolean;
   ENABLE_EVIDENCE_THUMBNAILS?: string | boolean;
   ENABLE_EVIDENCE_RETENTION?: string | boolean;
+  ENABLE_PREUPLOAD_DEDUPLICATION?: string | boolean;
   RETENCAO_EVIDENCIAS_DIAS?: string | number;
   RETENCAO_LOGS_DIAS?: string | number;
   GEMINI_API_KEY?: string;
@@ -363,6 +364,34 @@ export async function initDb(db: D1Database): Promise<void> {
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_evidencias_portal ON evidencias(portal_id)").run();
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_evidencias_missao ON evidencias(missao_id)").run();
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_missoes_cert ON missoes_evidencias(certificacao_id)").run();
+
+    // Ensure UNIQUE index to avoid logic duplicity on avaliacao_id + missao_id + image_hash
+    try {
+      const duplicatesResult = await db.prepare(`
+        SELECT avaliacao_id, missao_id, image_hash, COUNT(*) as cnt
+        FROM evidencias
+        GROUP BY avaliacao_id, missao_id, image_hash
+        HAVING cnt > 1
+      `).all() as { results: any[] };
+
+      if (duplicatesResult && duplicatesResult.results && duplicatesResult.results.length > 0) {
+        Logger.warn("RELATÓRIO TÉCNICO DE DUPLICIDADE: Foram detectados registros duplicados para a combinação (avaliacao_id, missao_id, image_hash) na tabela 'evidencias'. Não é possível criar o índice UNIQUE. Linhas afetadas: " + JSON.stringify(duplicatesResult.results));
+        // Log to app_logs
+        try {
+          await db.prepare(`
+            INSERT INTO app_logs (tipo, evento, usuario_id, perfil, ip_hash, user_agent_hash, metadata_json)
+            VALUES ('WARNING', 'RELATORIO_TECNICO_DUPLICIDADE_EVIDENCIAS', 'sistema', 'sistema', '', '', ?)
+          `).bind(JSON.stringify({ duplicates: duplicatesResult.results })).run();
+        } catch (logErr) {
+          console.error("Erro ao registrar relatório técnico de duplicidade em app_logs:", logErr);
+        }
+      } else {
+        await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_evidencias_unique_duplicity ON evidencias(avaliacao_id, missao_id, image_hash)").run();
+        Logger.info("Índice UNIQUE 'idx_evidencias_unique_duplicity' verificado/criado com sucesso.");
+      }
+    } catch (err: any) {
+      Logger.error(`Erro ao criar índice único de duplicidade de evidências: ${err.message || err}`);
+    }
 
     // Seed default missions and item mapping if empty
     try {
