@@ -97,9 +97,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       return jsonResponse({ success: false, error: "Payload JSON inválido" }, 400);
     }
 
-    const { avaliacaoId, missaoId, imageHash, mimeType, tamanhoFinal, largura, altura } = data;
+    const { missaoId, imageHash, mimeType, tamanhoFinal, largura, altura } = data;
 
-    if (!avaliacaoId || !missaoId || !imageHash || !mimeType) {
+    if (!missaoId || !imageHash || !mimeType) {
       return jsonResponse({ success: false, error: "Parâmetros obrigatórios do preflight ausentes" }, 400);
     }
 
@@ -118,10 +118,6 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const MAX_SIZE = 1 * 1024 * 1024; // 1 MB
     if (tamanhoFinal > MAX_SIZE) {
       return jsonResponse({ success: false, error: "O tamanho do arquivo excede o limite de 1 MB." }, 400);
-    }
-
-    if (avaliacaoId !== portal.avaliacao_id) {
-      return jsonResponse({ success: false, error: "ID da avaliação divergente" }, 400);
     }
 
     const avaliacao = await env.DB.prepare(

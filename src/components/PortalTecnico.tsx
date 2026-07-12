@@ -284,6 +284,11 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
   const [expandedMission, setExpandedMission] = useState<string | null>(null);
   const [uploadingMissionId, setUploadingMissionId] = useState<string | null>(null);
   const [uploadStatusText, setUploadStatusText] = useState<string>("Comprimindo e enviando foto de forma segura...");
+  const [uploadSteps, setUploadSteps] = useState<{
+    key: string;
+    label: string;
+    status: 'pending' | 'active' | 'success' | 'error';
+  }[]>([]);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [showSuccessScreen, setShowSuccessScreen] = useState<boolean>(false);
   
@@ -483,23 +488,40 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
 
     setUploadingMissionId(missionId);
     setErrorMsg(null);
-    setUploadStatusText("Preparando e otimizando a imagem...");
+    setUploadStatusText("Iniciando envio seguro...");
+
+    const steps = [
+      { key: 'prepare', label: "Preparando e otimizando a imagem...", status: 'pending' as const },
+      { key: 'hash', label: "Calculando assinatura digital de segurança...", status: 'pending' as const },
+      { key: 'verify', label: "Verificando se a foto já foi enviada...", status: 'pending' as const },
+      { key: 'ref', label: "Registrando referência segura...", status: 'pending' as const },
+      { key: 'physical', label: "Enviando arquivo físico...", status: 'pending' as const },
+      { key: 'save', label: "Salvando informações...", status: 'pending' as const },
+      { key: 'finalize', label: "Finalizando envio...", status: 'pending' as const }
+    ];
+    setUploadSteps(steps);
+
+    const updateStep = (key: string, status: 'pending' | 'active' | 'success' | 'error') => {
+      setUploadSteps(prev => prev.map(step => step.key === key ? { ...step, status } : step));
+    };
 
     try {
       // 1. Process and compress client-side (strips EXIF automatically)
+      updateStep('prepare', 'active');
       const processed = await processAndCompressImage(file);
+      updateStep('prepare', 'success');
 
       // 2. Calculate SHA-256 hash (Requirement 1 & 2)
-      setUploadStatusText("Calculando assinatura digital de segurança...");
+      updateStep('hash', 'active');
       const imageHash = await calculateSha256(processed.base64);
+      updateStep('hash', 'success');
 
       // 3. Consult pre-validation endpoint (Requirement 3)
-      setUploadStatusText("Verificando se a foto já foi enviada...");
+      updateStep('verify', 'active');
       const preflightRes = await apiFetch(`/api/evidencias/portal/${currentToken}/preflight`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          avaliacaoId: evaluation?.id || portal?.id,
           missaoId: missionId,
           imageHash,
           mimeType: "image/jpeg",
@@ -510,24 +532,31 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
       });
 
       if (!preflightRes.ok) {
-        const errorData = await preflightRes.json() as any;
-        alert(errorData.error || "Erro de validação preliminar do arquivo.");
+        updateStep('verify', 'error');
+        alert("Não foi possível concluir o envio. Caso a imagem já tenha sido recebida, atualize a tela antes de tentar novamente.");
+        setUploadingMissionId(null);
         return;
       }
 
+      updateStep('verify', 'success');
       const preflightData = await preflightRes.json() as any;
       const { action, preflightToken } = preflightData.data || {};
 
       if (action === "REUSE_EXISTING_EVIDENCE") {
         // Case 1: Already exists in the current evaluation + mission
-        setUploadStatusText("Foto já registrada! Atualizando dados...");
+        updateStep('ref', 'success');
+        updateStep('physical', 'success');
+        updateStep('save', 'success');
+        updateStep('finalize', 'active');
         await loadPortalDataForToken(currentToken, undefined, true);
+        updateStep('finalize', 'success');
+        setTimeout(() => setUploadingMissionId(null), 1000);
         return;
       }
 
       if (action === "CREATE_LOGICAL_REFERENCE" || action === "UPLOAD_WITH_REUSE_ALERT") {
         // Case 2 or 3: Deduplication triggered. Commit logic reference only (Requirements 4, 5, 8, 9)
-        setUploadStatusText("Registrando referência segura...");
+        updateStep('ref', 'active');
         const commitRes = await apiFetch(`/api/evidencias/portal/${currentToken}/commit-reference`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -537,17 +566,25 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
         });
 
         if (!commitRes.ok) {
-          const commitErr = await commitRes.json() as any;
-          alert(commitErr.error || "Não foi possível concluir o registro de referência lógica.");
+          updateStep('ref', 'error');
+          alert("Não foi possível concluir o envio. Caso a imagem já tenha sido recebida, atualize a tela antes de tentar novamente.");
+          setUploadingMissionId(null);
           return;
         }
 
+        updateStep('ref', 'success');
+        updateStep('physical', 'success'); // Deduplicado, sem necessidade de upload físico
+        updateStep('save', 'success');
+        updateStep('finalize', 'active');
         await loadPortalDataForToken(currentToken, undefined, true);
+        updateStep('finalize', 'success');
+        setTimeout(() => setUploadingMissionId(null), 1000);
         return;
       }
 
       // Case 4: Complete physical upload required (Requirement 6)
-      setUploadStatusText("Enviando arquivo físico de imagem...");
+      updateStep('ref', 'success'); // Já verificado/autorizado no preflight
+      updateStep('physical', 'active');
       const res = await apiFetch(`/api/evidencias/portal/${currentToken}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -566,16 +603,28 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
       });
 
       if (!res.ok) {
-        alert("Não foi possível concluir o envio. A foto pode já ter sido recebida. Atualize a tela antes de tentar novamente.");
+        updateStep('physical', 'error');
+        alert("Não foi possível concluir o envio. Caso a imagem já tenha sido recebida, atualize a tela antes de tentar novamente.");
+        setUploadingMissionId(null);
         return;
       }
 
+      updateStep('physical', 'success');
+      updateStep('save', 'active');
+      // Simulação rápida para visualização da etapa de salvar
+      await new Promise(resolve => setTimeout(resolve, 300));
+      updateStep('save', 'success');
+      
+      updateStep('finalize', 'active');
       // Reload evidences silently
       await loadPortalDataForToken(currentToken, undefined, true);
+      updateStep('finalize', 'success');
+      setTimeout(() => setUploadingMissionId(null), 1000);
     } catch (err) {
       console.error(err);
-      alert("Não foi possível concluir o envio. A foto pode já ter sido recebida. Atualize a tela antes de tentar novamente.");
-    } finally {
+      // Identifica qual etapa falhou e exibe erro amigável geral
+      setUploadSteps(prev => prev.map(step => step.status === 'active' ? { ...step, status: 'error' } : step));
+      alert("Não foi possível concluir o envio. Caso a imagem já tenha sido recebida, atualize a tela antes de tentar novamente.");
       setUploadingMissionId(null);
     }
   };
@@ -1280,9 +1329,37 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
 
                       {/* Loader overlay during upload processing */}
                       {uploadingMissionId === m.id && (
-                        <div className="flex items-center justify-center gap-2 bg-slate-950/75 p-3 rounded-xl border border-slate-800/50">
-                          <Loader2 className="w-4 h-4 text-red-500 animate-spin" />
-                          <p className="text-xs text-red-400 font-semibold">{uploadStatusText}</p>
+                        <div className="bg-slate-950/90 border border-slate-800/80 p-4 rounded-xl space-y-2.5">
+                          <div className="flex items-center gap-2 border-b border-slate-800 pb-2 mb-2">
+                            <Loader2 className="w-4 h-4 text-red-500 animate-spin" />
+                            <span className="text-xs font-bold text-white uppercase tracking-wider">Processando Envio Seguro</span>
+                          </div>
+                          <div className="space-y-1.5">
+                            {uploadSteps.map((step) => (
+                              <div key={step.key} className="flex items-center gap-2 text-[11px] leading-tight">
+                                {step.status === 'success' && (
+                                  <span className="text-emerald-500 font-black">✔</span>
+                                )}
+                                {step.status === 'active' && (
+                                  <Loader2 className="w-3 h-3 text-red-500 animate-spin shrink-0" />
+                                )}
+                                {step.status === 'pending' && (
+                                  <span className="text-slate-600">●</span>
+                                )}
+                                {step.status === 'error' && (
+                                  <span className="text-red-500 font-black">✖</span>
+                                )}
+                                <span className={`
+                                  ${step.status === 'success' ? 'text-slate-300 font-medium' : ''}
+                                  ${step.status === 'active' ? 'text-red-400 font-bold animate-pulse' : ''}
+                                  ${step.status === 'pending' ? 'text-slate-500' : ''}
+                                  ${step.status === 'error' ? 'text-red-400 font-bold' : ''}
+                                `}>
+                                  {step.label}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       )}
                     </div>
