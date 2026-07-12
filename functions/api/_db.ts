@@ -134,6 +134,20 @@ export async function initDb(db: D1Database): Promise<void> {
       // Column already exists, ignore
     }
 
+    // Safely add image_signature column to ia_evidencias if it doesn't exist (using PRAGMA table_info verification)
+    try {
+      const info = await db.prepare("PRAGMA table_info(ia_evidencias)").all() as { results: any[] };
+      const hasImgSig = info.results && info.results.some((col: any) => col.name === 'image_signature');
+      if (!hasImgSig) {
+        await db.prepare("ALTER TABLE ia_evidencias ADD COLUMN image_signature TEXT").run();
+        Logger.info("Coluna 'image_signature' adicionada com sucesso à tabela ia_evidencias.");
+      } else {
+        Logger.info("Coluna 'image_signature' já existe na tabela ia_evidencias.");
+      }
+    } catch (err: any) {
+      Logger.error(`Erro ao verificar/adicionar coluna image_signature: ${err.message || err}`);
+    }
+
     // Seed initial knowledge base rules if empty
     try {
       const countCheck = await db.prepare("SELECT COUNT(*) as cnt FROM knowledge_base").first() as any;

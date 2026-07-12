@@ -492,8 +492,7 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
       });
 
       if (!res.ok) {
-        const err = await res.json() as any;
-        alert(err.error || "Falha ao enviar arquivo.");
+        alert("Não foi possível concluir o envio. A foto pode já ter sido recebida. Atualize a tela antes de tentar novamente.");
         return;
       }
 
@@ -501,7 +500,7 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
       await loadPortalDataForToken(currentToken, undefined, true);
     } catch (err) {
       console.error(err);
-      alert("Falha ao processar e enviar imagem.");
+      alert("Não foi possível concluir o envio. A foto pode já ter sido recebida. Atualize a tela antes de tentar novamente.");
     } finally {
       setUploadingMissionId(null);
     }

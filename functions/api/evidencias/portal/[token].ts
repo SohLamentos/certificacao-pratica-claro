@@ -371,6 +371,41 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       const hashArray = Array.from(new Uint8Array(hashBuffer));
       const image_hash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 
+      // 3. IDEMPOTENCY: Check if exactly this evidence (evaluation, mission, image_hash) was already uploaded
+      const existingIdempotent = await env.DB.prepare(`
+        SELECT * FROM evidencias
+        WHERE avaliacao_id = ? AND missao_id = ? AND image_hash = ?
+        LIMIT 1
+      `).bind(portal.avaliacao_id, missaoId, image_hash).first() as any;
+
+      if (existingIdempotent) {
+        // Return success with reused: true (Requirement 3)
+        return jsonResponse({
+          success: true,
+          reused: true,
+          data: {
+            evidencia: {
+              id: existingIdempotent.id,
+              missaoId: existingIdempotent.missao_id,
+              r2Key: existingIdempotent.r2_key,
+              imageHash: existingIdempotent.image_hash,
+              repetida: existingIdempotent.repetida,
+              enviadaEm: existingIdempotent.enviada_em
+            },
+            reused: true
+          },
+          evidence: {
+            id: existingIdempotent.id,
+            missaoId: existingIdempotent.missao_id,
+            r2Key: existingIdempotent.r2_key,
+            imageHash: existingIdempotent.image_hash,
+            repetida: existingIdempotent.repetida,
+            enviadaEm: existingIdempotent.enviada_em
+          },
+          message: "Evidência já havia sido recebida."
+        });
+      }
+
       // Generate Image Signature
       const config = getAppConfig(env);
       if (!config.IMAGE_SIGNING_SECRET) {
@@ -412,139 +447,259 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         }
       }
 
-      // Handle Reference Counting & Orphan Cleanups
+      // Prepare Database changes
       const existingEvId = await env.DB.prepare(
         "SELECT id, r2_key, image_hash FROM evidencias WHERE portal_id = ? AND missao_id = ?"
       ).bind(portal.id, missaoId).first() as any;
 
       const evidenceId = existingEvId ? existingEvId.id : crypto.randomUUID();
 
-      if (existingEvId && existingEvId.r2_key) {
-        const oldHash = existingEvId.image_hash;
-        if (oldHash) {
-          const refRow = await env.DB.prepare(
-            "SELECT ref_count FROM image_ref_counts WHERE image_hash = ?"
-          ).bind(oldHash).first() as { ref_count: number } | null;
+      let oldHashToClean: string | null = null;
+      let oldR2KeyToClean: string | null = null;
+      let shouldDeleteOldRef = false;
+      let newOldRefCount = 0;
 
-          if (refRow) {
-            const newCount = Math.max(0, refRow.ref_count - 1);
-            await env.DB.prepare(
-              "UPDATE image_ref_counts SET ref_count = ? WHERE image_hash = ?"
-            ).bind(newCount, oldHash).run();
+      if (existingEvId && existingEvId.image_hash && existingEvId.image_hash !== image_hash) {
+        oldHashToClean = existingEvId.image_hash;
+        oldR2KeyToClean = existingEvId.r2_key;
+        const refRow = await env.DB.prepare(
+          "SELECT ref_count FROM image_ref_counts WHERE image_hash = ?"
+        ).bind(oldHashToClean).first() as { ref_count: number } | null;
 
-            if (newCount === 0) {
-              try {
-                await bucket.delete(existingEvId.r2_key);
-                await env.DB.prepare("DELETE FROM image_ref_counts WHERE image_hash = ?").bind(oldHash).run();
-              } catch (delErr) {
-                console.error("Error deleting orphan photo from R2:", delErr);
-              }
-            }
+        if (refRow) {
+          newOldRefCount = Math.max(0, refRow.ref_count - 1);
+          if (newOldRefCount === 0) {
+            shouldDeleteOldRef = true;
           }
         }
       }
 
-      // Increment reference counting
-      await env.DB.prepare(`
-        INSERT INTO image_ref_counts (image_hash, r2_key, ref_count, last_used_at)
-        VALUES (?, ?, 1, CURRENT_TIMESTAMP)
-        ON CONFLICT(image_hash) DO UPDATE SET
-          ref_count = ref_count + 1,
-          last_used_at = CURRENT_TIMESTAMP
-      `).bind(image_hash, r2_key).run();
+      // Build D1 batch statements to ensure strict atomicity
+      const statements = [];
 
-      // Save into standard `evidencias` table
-      await env.DB.prepare(`
-        INSERT INTO evidencias (id, portal_id, avaliacao_id, missao_id, tecnico_login_hash, r2_key, image_hash, image_signature, mime_type, tamanho_original, tamanho_final, largura, altura, status, repetida, repetida_avaliacao_id, enviada_em, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDENTE', ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          r2_key = excluded.r2_key,
-          image_hash = excluded.image_hash,
-          image_signature = excluded.image_signature,
-          tamanho_original = excluded.tamanho_original,
-          tamanho_final = excluded.tamanho_final,
-          largura = excluded.largura,
-          altura = excluded.altura,
-          status = 'PENDENTE',
-          repetida = excluded.repetida,
-          repetida_avaliacao_id = excluded.repetida_avaliacao_id,
-          enviada_em = excluded.enviada_em,
-          updated_at = excluded.updated_at
-      `).bind(
-        evidenceId,
-        portal.id,
-        portal.avaliacao_id,
-        missaoId,
-        sessionHash || null,
-        r2_key,
-        image_hash,
-        image_signature,
-        mime_type,
-        tamanho_original || null,
-        tamanho_final || null,
-        largura || null,
-        altura || null,
-        repetida,
-        repetida_avaliacao_id,
-        nowStr,
-        nowStr,
-        nowStr
-      ).run();
+      // 1. Decrement old file reference
+      if (oldHashToClean) {
+        if (shouldDeleteOldRef) {
+          statements.push(
+            env.DB.prepare("DELETE FROM image_ref_counts WHERE image_hash = ?").bind(oldHashToClean)
+          );
+        } else {
+          statements.push(
+            env.DB.prepare("UPDATE image_ref_counts SET ref_count = ? WHERE image_hash = ?").bind(newOldRefCount, oldHashToClean)
+          );
+        }
+      }
+
+      // 2. Increment new file reference
+      statements.push(
+        env.DB.prepare(`
+          INSERT INTO image_ref_counts (image_hash, r2_key, ref_count, last_used_at)
+          VALUES (?, ?, 1, CURRENT_TIMESTAMP)
+          ON CONFLICT(image_hash) DO UPDATE SET
+            ref_count = ref_count + 1,
+            last_used_at = CURRENT_TIMESTAMP
+        `).bind(image_hash, r2_key)
+      );
+
+      // 3. Save into standard evidences table
+      statements.push(
+        env.DB.prepare(`
+          INSERT INTO evidencias (id, portal_id, avaliacao_id, missao_id, tecnico_login_hash, r2_key, image_hash, image_signature, mime_type, tamanho_original, tamanho_final, largura, altura, status, repetida, repetida_avaliacao_id, enviada_em, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDENTE', ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            r2_key = excluded.r2_key,
+            image_hash = excluded.image_hash,
+            image_signature = excluded.image_signature,
+            tamanho_original = excluded.tamanho_original,
+            tamanho_final = excluded.tamanho_final,
+            largura = excluded.largura,
+            altura = excluded.altura,
+            status = 'PENDENTE',
+            repetida = excluded.repetida,
+            repetida_avaliacao_id = excluded.repetida_avaliacao_id,
+            enviada_em = excluded.enviada_em,
+            updated_at = excluded.updated_at
+        `).bind(
+          evidenceId,
+          portal.id,
+          portal.avaliacao_id,
+          missaoId,
+          sessionHash || null,
+          r2_key,
+          image_hash,
+          image_signature,
+          mime_type,
+          tamanho_original || null,
+          tamanho_final || null,
+          largura || null,
+          altura || null,
+          repetida,
+          repetida_avaliacao_id,
+          nowStr,
+          nowStr,
+          nowStr
+        )
+      );
+
+      // 4. Update portal state to EM_ENVIO
+      statements.push(
+        env.DB.prepare(`
+          UPDATE portais_evidencias
+          SET status = 'EM_ENVIO', updated_at = ?
+          WHERE id = ?
+        `).bind(nowStr, portal.id)
+      );
+
+      // Execute atomic transaction batch
+      try {
+        await (env.DB as any).batch(statements);
+      } catch (txError: any) {
+        console.error("D1 Transaction Batch Error:", txError);
+
+        // COMPENSATING ROLLBACK: delete newly uploaded file from R2 to prevent orphans
+        if (!isReusedAsset) {
+          try {
+            await bucket.delete(r2_key);
+            console.log(`Compensated R2: deleted brand new file ${r2_key} due to D1 transaction failure.`);
+          } catch (delErr) {
+            console.error("Failed to delete orphan file from R2 after D1 rollback:", delErr);
+          }
+        }
+
+        // Register technical error only in app_logs (Requirement 7)
+        try {
+          await logEvent(env, {
+            tipo: LogLevel.ERROR,
+            evento: "PORTAL_UPLOAD_TX_FALHA",
+            usuario_id: "tecnico",
+            perfil: "tecnico",
+            ip: clientIp,
+            userAgent,
+            metadata: {
+              error: txError.message || String(txError),
+              portal_id: portal.id,
+              missao_id: missaoId,
+              image_hash
+            }
+          });
+        } catch (logErr) {
+          console.error("Failed to log transaction error to app_logs:", logErr);
+        }
+
+        // Return user friendly message (Requirement 7)
+        return jsonResponse({
+          success: false,
+          error: "Não foi possível concluir o envio. A foto pode já ter sido recebida. Atualize a tela antes de tentar novamente.",
+          message: txError.message || String(txError)
+        }, 500);
+      }
+
+      // Cleanup old replaced file from R2 if database transaction succeeded
+      if (shouldDeleteOldRef && oldR2KeyToClean) {
+        try {
+          await bucket.delete(oldR2KeyToClean);
+          console.log(`Cleaned up old replaced R2 file: ${oldR2KeyToClean}`);
+        } catch (delErr) {
+          console.error("Error deleting old replaced photo from R2:", delErr);
+        }
+      }
 
       // MIRROR UPLOAD INTO `ia_evidencias` for instant back-office & AI analysis capability!
-      // Map mission to standard mandatory stages of backoffice if name matches, or use mission name as stage
-      const targetStage = mission.nome;
-      const fileUrl = `/api/ia/evidencias/file?key=${encodeURIComponent(r2_key)}`;
+      // This is an optional step. If it fails, we keep the upload concluded and do NOT return 500.
+      try {
+        const targetStage = mission.nome;
+        const fileUrl = `/api/ia/evidencias/file?key=${encodeURIComponent(r2_key)}`;
 
-      // Check if already present in ia_evidencias
-      const existingIa = await env.DB.prepare(
-        "SELECT id FROM ia_evidencias WHERE certificacao_id = ? AND etapa = ?"
-      ).bind(portal.avaliacao_id, targetStage).first() as any;
+        const existingIa = await env.DB.prepare(
+          "SELECT id FROM ia_evidencias WHERE certificacao_id = ? AND etapa = ?"
+        ).bind(portal.avaliacao_id, targetStage).first() as any;
 
-      const iaEvId = existingIa ? existingIa.id : crypto.randomUUID();
+        const iaEvId = existingIa ? existingIa.id : crypto.randomUUID();
 
-      await env.DB.prepare(`
-        INSERT INTO ia_evidencias (id, certificacao_id, etapa, tipo_arquivo, arquivo_url, arquivo_key, status_ia, resultado_ia, justificativa_ia, confianca_ia, decisao_cq, observacao_cq, ia_modelo, ia_custo_estimado, ia_hash_arquivo, image_signature, ia_origem, imagem_repetida, imagem_repetida_alerta, risco_reuso, usuario_upload_id, perfil_upload, login_hash, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'PENDENTE', NULL, NULL, NULL, NULL, NULL, NULL, 0, ?, ?, 'MANUAL', ?, ?, ?, ?, 'tecnico', ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          arquivo_url = excluded.arquivo_url,
-          arquivo_key = excluded.arquivo_key,
-          ia_hash_arquivo = excluded.ia_hash_arquivo,
-          image_signature = excluded.image_signature,
-          status_ia = 'PENDENTE',
-          resultado_ia = NULL,
-          justificativa_ia = NULL,
-          imagem_repetida = excluded.imagem_repetida,
-          imagem_repetida_alerta = excluded.imagem_repetida_alerta,
-          risco_reuso = excluded.risco_reuso,
-          updated_at = excluded.updated_at
-      `).bind(
-        iaEvId,
-        portal.avaliacao_id,
-        targetStage,
-        mime_type,
-        fileUrl,
-        r2_key,
-        image_hash,
-        image_signature,
-        repetida,
-        repetida ? `Imagem idêntica detectada na avaliação de ID: ${repetida_avaliacao_id}` : null,
-        repetida ? 'ALTO' : 'BAIXO',
-        avaliacao.tecnico_id ? String(avaliacao.tecnico_id) : 'tecnico',
-        sessionHash || '',
-        nowStr,
-        nowStr
-      ).run();
+        await env.DB.prepare(`
+          INSERT INTO ia_evidencias (id, certificacao_id, etapa, tipo_arquivo, arquivo_url, arquivo_key, status_ia, resultado_ia, justificativa_ia, confianca_ia, decisao_cq, observacao_cq, ia_modelo, ia_custo_estimado, ia_hash_arquivo, image_signature, ia_origem, imagem_repetida, imagem_repetida_alerta, risco_reuso, usuario_upload_id, perfil_upload, login_hash, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, 'PENDENTE', NULL, NULL, NULL, NULL, NULL, NULL, 0, ?, ?, 'MANUAL', ?, ?, ?, ?, 'tecnico', ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            arquivo_url = excluded.arquivo_url,
+            arquivo_key = excluded.arquivo_key,
+            ia_hash_arquivo = excluded.ia_hash_arquivo,
+            image_signature = excluded.image_signature,
+            status_ia = 'PENDENTE',
+            resultado_ia = NULL,
+            justificativa_ia = NULL,
+            imagem_repetida = excluded.imagem_repetida,
+            imagem_repetida_alerta = excluded.imagem_repetida_alerta,
+            risco_reuso = excluded.risco_reuso,
+            updated_at = excluded.updated_at
+        `).bind(
+          iaEvId,
+          portal.avaliacao_id,
+          targetStage,
+          mime_type,
+          fileUrl,
+          r2_key,
+          image_hash,
+          image_signature,
+          repetida,
+          repetida ? `Imagem idêntica detectada na avaliação de ID: ${repetida_avaliacao_id}` : null,
+          repetida ? 'ALTO' : 'BAIXO',
+          avaliacao.tecnico_id ? String(avaliacao.tecnico_id) : 'tecnico',
+          sessionHash || '',
+          nowStr,
+          nowStr
+        ).run();
+      } catch (iaError: any) {
+        console.error("Non-blocking IA Evidence mirroring error:", iaError);
+        // Only log to app_logs, do not return 500
+        try {
+          await logEvent(env, {
+            tipo: LogLevel.WARNING,
+            evento: "PORTAL_UPLOAD_IA_SYNC_FALHA",
+            usuario_id: "tecnico",
+            perfil: "tecnico",
+            ip: clientIp,
+            userAgent,
+            metadata: {
+              error: iaError.message || String(iaError),
+              portal_id: portal.id,
+              missao_id: missaoId,
+              image_hash
+            }
+          });
+        } catch (logErr) {
+          console.error("Failed to log optional sync failure:", logErr);
+        }
+      }
 
-      // Update portal state to EM_ENVIO
-      await env.DB.prepare(`
-        UPDATE portais_evidencias
-        SET status = 'EM_ENVIO', updated_at = ?
-        WHERE id = ?
-      `).bind(nowStr, portal.id).run();
+      // Log successful upload audit event
+      await logEvent(env, {
+        tipo: LogLevel.AUDITORIA,
+        evento: "PORTAL_UPLOAD_CONCLUIDO",
+        usuario_id: "tecnico",
+        perfil: "tecnico",
+        ip: clientIp,
+        userAgent,
+        metadata: {
+          avaliacao_id: portal.avaliacao_id,
+          portal_id: portal.id,
+          missao_id: missaoId,
+          image_hash
+        }
+      });
 
       return jsonResponse({
         success: true,
+        data: {
+          status: "AGUARDANDO_ANALISE",
+          evidencia: {
+            id: evidenceId,
+            missaoId,
+            r2Key: r2_key,
+            imageHash: image_hash,
+            repetida,
+            enviadaEm: nowStr
+          }
+        },
         evidence: {
           id: evidenceId,
           missaoId,
