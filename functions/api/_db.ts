@@ -62,6 +62,19 @@ export async function initDb(db: D1Database): Promise<void> {
     return;
   }
 
+  // Cold-start optimization: check if database is already fully initialized
+  try {
+    const isReady = await db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='portais_evidencias'"
+    ).first();
+    if (isReady) {
+      dbInitialized = true;
+      return;
+    }
+  } catch (err) {
+    // Continue with full initialization if check fails
+  }
+
   try {
     await runInitialMigration(db);
     await runIncrementalMigration(db);
@@ -521,4 +534,18 @@ export function jsonResponse(data: any, status: number = 200): Response {
       "Expires": "0"
     }
   });
+}
+
+export function getLocalDateString(date: Date = new Date()): string {
+  const formatter = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  const parts = formatter.formatToParts(date);
+  const day = parts.find(p => p.type === 'day')?.value;
+  const month = parts.find(p => p.type === 'month')?.value;
+  const year = parts.find(p => p.type === 'year')?.value;
+  return `${year}-${month}-${day}`;
 }

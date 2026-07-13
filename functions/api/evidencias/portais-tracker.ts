@@ -54,23 +54,56 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
 
     const trackerItems = [];
 
-    // Fetch counts for each row
+    // Optimize N+1: Fetch all active missions and group in memory
+    const missionsRes = await env.DB.prepare(`
+      SELECT 
+        id,
+        certificacao_id,
+        obrigatoria,
+        permite_reuso_mesma_imagem
+      FROM missoes_evidencias 
+      WHERE ativa = 1
+    `).all();
+    const allMissions = missionsRes.results || [];
+    const missionsByCertMap = new Map<number, any[]>();
+    for (const m of allMissions as any[]) {
+      const cId = Number(m.certificacao_id);
+      if (!missionsByCertMap.has(cId)) {
+        missionsByCertMap.set(cId, []);
+      }
+      missionsByCertMap.get(cId)!.push(m);
+    }
+
+    // Optimize N+1: Fetch all evidences for all active portal IDs in a single batch
+    const portalIds = [...new Set((rows as any[]).map(r => r.portal_id).filter(Boolean))];
+    const evidencesByPortalMap = new Map<string, any[]>();
+    if (portalIds.length > 0) {
+      const placeholders = portalIds.map(() => '?').join(',');
+      const evsRes = await env.DB.prepare(`
+        SELECT id, portal_id, missao_id, image_hash, status, repetida, arquivo_excluido, enviada_em, created_at 
+        FROM evidencias 
+        WHERE portal_id IN (${placeholders})
+      `).bind(...portalIds).all();
+      const evsList = evsRes.results || [];
+      for (const ev of evsList as any[]) {
+        const pId = ev.portal_id;
+        if (!evidencesByPortalMap.has(pId)) {
+          evidencesByPortalMap.set(pId, []);
+        }
+        evidencesByPortalMap.get(pId)!.push(ev);
+      }
+    }
+
+    // Fetch counts for each row using the grouped in-memory data
     for (const r of rows as any[]) {
       const evaluationId = r.avaliacao_id;
       const portalId = r.portal_id;
       const certificacaoId = r.certificacao_id;
 
-      // 1. Fetch total and mandatory missions for this certification
-      const missionsRow = await env.DB.prepare(`
-        SELECT 
-          COUNT(*) as total,
-          SUM(CASE WHEN obrigatoria = 1 THEN 1 ELSE 0 END) as mandatory
-        FROM missoes_evidencias 
-        WHERE certificacao_id = ? AND ativa = 1
-      `).bind(certificacaoId).first() as any;
-
-      const totalMissions = missionsRow ? (missionsRow.total || 0) : 0;
-      const mandatoryMissions = missionsRow ? (missionsRow.mandatory || 0) : 0;
+      // 1. Get total and mandatory missions for this certification from in-memory map
+      const activeMissions = missionsByCertMap.get(Number(certificacaoId)) || [];
+      const totalMissions = activeMissions.length;
+      const mandatoryMissions = activeMissions.filter((m: any) => m.obrigatoria === 1).length;
 
       // 2. Fetch evidences details
       let totalUploaded = 0;
@@ -80,17 +113,71 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
       let hasPending = false;
       let hasApproved = false;
 
-      if (portalId) {
-        const evs = await env.DB.prepare(`
-          SELECT status, repetida, enviada_em 
-          FROM evidencias 
-          WHERE portal_id = ?
-        `).bind(portalId).all();
+      const evsResults = portalId ? (evidencesByPortalMap.get(portalId) || []) : [];
 
-        const evsResults = evs.results || [];
-        totalUploaded = evsResults.length;
+      if (portalId) {
+        // Build active missions lookup map
+        const activeMissionsMap = new Map<string, any>();
+        for (const m of activeMissions as any[]) {
+          activeMissionsMap.set(m.id, m);
+        }
+
+        // Filter valid candidates for progress
+        const candidates = (evsResults as any[]).filter(ev => {
+          if (ev.arquivo_excluido === 1) return false;
+          if (!activeMissionsMap.has(ev.missao_id)) return false;
+          if (!ev.status) return false;
+          return true;
+        });
+
+        // Sort candidates by creation/upload time
+        candidates.sort((a, b) => {
+          const timeA = new Date(a.enviada_em || a.created_at || 0).getTime();
+          const timeB = new Date(b.enviada_em || b.created_at || 0).getTime();
+          if (timeA !== timeB) return timeA - timeB;
+          return a.id.localeCompare(b.id);
+        });
+
+        // Determine valid missions completed
+        const hashFirstUseMission = new Map<string, string>(); // image_hash -> first mission_id
+        const validMissions = new Set<string>();
+
+        for (const ev of candidates) {
+          const hash = ev.image_hash;
+          const missionId = ev.missao_id;
+          const m = activeMissionsMap.get(missionId)!;
+
+          if (!hashFirstUseMission.has(hash)) {
+            hashFirstUseMission.set(hash, missionId);
+            validMissions.add(missionId);
+          } else {
+            const firstMissionId = hashFirstUseMission.get(hash)!;
+            if (firstMissionId === missionId) {
+              continue;
+            }
+            const firstMission = activeMissionsMap.get(firstMissionId);
+            const currentMission = m;
+
+            const firstAllows = firstMission?.permite_reuso_mesma_imagem === 1;
+            const currentAllows = currentMission?.permite_reuso_mesma_imagem === 1;
+
+            if (firstAllows && currentAllows) {
+              validMissions.add(missionId);
+            }
+          }
+        }
+
+        // Count how many of the validMissions are mandatory
+        const validMandatoryMissions = [...validMissions].filter(mid => {
+          const m = activeMissionsMap.get(mid);
+          return m && m.obrigatoria === 1;
+        });
+
+        totalUploaded = validMandatoryMissions.length;
 
         for (const ev of evsResults as any[]) {
+          if (ev.arquivo_excluido === 1) continue;
+
           if (ev.repetida === 1) {
             repeatedCount++;
           }

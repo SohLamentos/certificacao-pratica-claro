@@ -106,6 +106,13 @@ export default function SettingsView({ onBack, onSwitchProfile }: SettingsViewPr
   const [searchTecText, setSearchTecText] = useState('');
   const [isPurging, setIsPurging] = useState(false);
 
+  // Administrative Controlled Correction States
+  const [isCorrectionModalOpen, setIsCorrectionModalOpen] = useState(false);
+  const [isDryRunning, setIsDryRunning] = useState(false);
+  const [isApplyingCorrection, setIsApplyingCorrection] = useState(false);
+  const [dryRunResult, setDryRunResult] = useState<any | null>(null);
+  const [correctionSuccessResult, setCorrectionSuccessResult] = useState<any | null>(null);
+
   // Fetch LGPD Data
   const fetchLgpdData = async () => {
     setIsLgpdLoading(true);
@@ -746,6 +753,54 @@ export default function SettingsView({ onBack, onSwitchProfile }: SettingsViewPr
       localStorage.removeItem('claro_dynamic_certificacoes');
       localStorage.removeItem('claro_dynamic_checklist_items');
       window.location.reload();
+    }
+  };
+
+  const runCorrectionDryRun = async () => {
+    setIsDryRunning(true);
+    setDryRunResult(null);
+    setCorrectionSuccessResult(null);
+    setIsCorrectionModalOpen(true);
+    try {
+      const res = await apiFetch('/api/evidencias/portal/migration-correction');
+      const data = await res.json() as any;
+      if (data.success) {
+        setDryRunResult(data);
+      } else {
+        alert(data.error || "Erro ao executar Dry Run de higienização.");
+        setIsCorrectionModalOpen(false);
+      }
+    } catch (err: any) {
+      alert(err.message || "Erro de rede ao executar Dry Run de higienização.");
+      setIsCorrectionModalOpen(false);
+    } finally {
+      setIsDryRunning(false);
+    }
+  };
+
+  const applyCorrection = async () => {
+    if (!window.confirm("CONFIRMAÇÃO CRÍTICA:\n\nDeseja aplicar todas as correções sugeridas aos registros afetados?\n\nEsta operação modificará os status dos portais e avaliações que foram identificados com inconsistências. Ela registrará auditoria detalhada no banco de dados e fornecerá instruções para desfazer se necessário.\n\nContinuar?")) {
+      return;
+    }
+
+    setIsApplyingCorrection(true);
+    try {
+      const res = await apiFetch('/api/evidencias/portal/migration-correction', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: true })
+      });
+      const data = await res.json() as any;
+      if (data.success) {
+        setCorrectionSuccessResult(data);
+        triggerSuccess("Higienização controlada concluída!");
+      } else {
+        alert(data.error || "Erro ao aplicar higienização de dados.");
+      }
+    } catch (err: any) {
+      alert(err.message || "Erro de rede ao aplicar higienização de dados.");
+    } finally {
+      setIsApplyingCorrection(false);
     }
   };
 
@@ -1712,6 +1767,28 @@ export default function SettingsView({ onBack, onSwitchProfile }: SettingsViewPr
                   </div>
                 </div>
 
+                {/* Controlled Sanitization Card */}
+                <div className="p-4 border border-indigo-100 bg-indigo-50/10 rounded-2xl flex flex-col justify-between space-y-3 sm:col-span-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <h4 className="text-xs font-black text-indigo-700 uppercase tracking-wide flex items-center gap-1.5">
+                        <History size={14} className="text-indigo-600" />
+                        Higienização Controlada de Registros (Parte 5)
+                      </h4>
+                      <p className="text-[10px] text-slate-400 font-semibold leading-relaxed mt-1">
+                        Analise portais e avaliações alterados indevidamente pelo fluxo de evidências. Execute um Dry Run completo para pré-visualizar as inconsistências e aplicar correções com segurança, registrando auditoria e permitindo reversão.
+                      </p>
+                    </div>
+                    <button
+                      onClick={runCorrectionDryRun}
+                      className="py-1.5 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-lg text-xs transition-colors flex items-center gap-1.5 cursor-pointer select-none shadow-xs self-start shrink-0"
+                    >
+                      <History size={12} />
+                      <span>Iniciar Higienização (Dry Run)</span>
+                    </button>
+                  </div>
+                </div>
+
               </div>
             </div>
           )}
@@ -2009,6 +2086,200 @@ export default function SettingsView({ onBack, onSwitchProfile }: SettingsViewPr
                 <Save size={14} />
                 <span>Salvar Item</span>
               </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {isCorrectionModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in overflow-y-auto">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-4xl w-full p-6 space-y-5 my-8"
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <History className="text-indigo-600" size={20} />
+                <div>
+                  <h3 className="text-sm font-black text-slate-800 uppercase tracking-wide">
+                    Higienização Controlada de Registros
+                  </h3>
+                  <p className="text-[10px] text-slate-400 font-semibold">
+                    Análise e Correção de Inconsistências de Portais e Avaliações (Parte 5)
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCorrectionModalOpen(false)}
+                className="p-1 hover:bg-slate-50 text-slate-400 hover:text-slate-600 rounded-lg transition-colors cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Loading State */}
+            {isDryRunning && (
+              <div className="py-12 flex flex-col items-center justify-center space-y-3">
+                <RefreshCw className="animate-spin text-indigo-600" size={32} />
+                <p className="text-xs font-bold text-slate-600">Executando varredura e Dry Run no banco de dados...</p>
+                <p className="text-[10px] text-slate-400">Analisando portais indevidos e determinando status operacional das avaliações...</p>
+              </div>
+            )}
+
+            {/* Result State */}
+            {!isDryRunning && dryRunResult && (
+              <div className="space-y-4">
+                {/* Metrics */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="bg-indigo-50/20 border border-indigo-100/50 p-3 rounded-2xl">
+                    <span className="text-[10px] font-black uppercase text-indigo-500 block mb-0.5">Portais Afetados</span>
+                    <span className="text-xl font-extrabold text-indigo-700">{dryRunResult.portais_afetados_count}</span>
+                  </div>
+                  <div className="bg-amber-50/20 border border-amber-100/50 p-3 rounded-2xl">
+                    <span className="text-[10px] font-black uppercase text-amber-500 block mb-0.5">Avaliações Afetadas</span>
+                    <span className="text-xl font-extrabold text-amber-700">{dryRunResult.avaliacoes_afetadas_count}</span>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-100 p-3 rounded-2xl">
+                    <span className="text-[10px] font-black uppercase text-slate-500 block mb-0.5">Total Inconsistências</span>
+                    <span className="text-xl font-extrabold text-slate-700">{dryRunResult.total_afetados}</span>
+                  </div>
+                </div>
+
+                {/* Subtitle/Status message */}
+                {correctionSuccessResult ? (
+                  <div className="bg-emerald-50 border border-emerald-100 p-3.5 rounded-2xl space-y-1.5">
+                    <h4 className="text-xs font-black text-emerald-800 flex items-center gap-1.5 uppercase">
+                      <CheckCircle2 size={14} />
+                      Higienização Aplicada com Sucesso!
+                    </h4>
+                    <p className="text-[10px] text-emerald-700 font-semibold">
+                      Foram corrigidos {correctionSuccessResult.portais_corrigidos_count} portais e {correctionSuccessResult.avaliacoes_corrigidas_count} avaliações. As alterações foram registradas no log de auditoria do sistema.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="bg-slate-50 border border-slate-100 p-3 rounded-xl flex items-start gap-2">
+                    <Info className="text-slate-500 shrink-0 mt-0.5" size={14} />
+                    <p className="text-[10px] text-slate-500 font-semibold leading-relaxed">
+                      Este é um <strong>Dry Run (pré-visualização)</strong>. Nenhum dado foi modificado ainda. Revise as alterações propostas abaixo e clique em "Aplicar Higienização" para salvar.
+                    </p>
+                  </div>
+                )}
+
+                {/* Main list view */}
+                <div className="space-y-3 max-h-[380px] overflow-y-auto pr-1">
+                  {/* Portais List */}
+                  {dryRunResult.portais && dryRunResult.portais.length > 0 && (
+                    <div className="space-y-1.5">
+                      <h4 className="text-[11px] font-black text-indigo-600 uppercase tracking-wider">Portais Identificados ({dryRunResult.portais.length})</h4>
+                      <div className="space-y-1.5">
+                        {dryRunResult.portais.map((p: any, i: number) => (
+                          <div key={i} className="p-3 border border-slate-100 bg-slate-50/50 rounded-xl text-xs space-y-1">
+                            <div className="flex justify-between items-center">
+                              <span className="font-bold text-slate-800">Técnico: {p.nome_tecnico}</span>
+                              <div className="flex items-center gap-1.5 text-[10px]">
+                                <span className="bg-red-50 text-red-600 border border-red-100 px-1.5 py-0.5 rounded font-bold uppercase">{p.status_atual}</span>
+                                <span className="text-slate-400">➔</span>
+                                <span className="bg-indigo-50 text-indigo-600 border border-indigo-100 px-1.5 py-0.5 rounded font-bold uppercase">{p.status_proposto}</span>
+                              </div>
+                            </div>
+                            <p className="text-[10px] text-slate-400 leading-relaxed font-semibold">Motivo: {p.motivo}</p>
+                            <p className="text-[9px] text-slate-300 font-medium">Portal ID: {p.id_interno} | Avaliação: {p.avaliacao_id} ({p.data_avaliacao})</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Avaliacoes List */}
+                  {dryRunResult.avaliacoes && dryRunResult.avaliacoes.length > 0 && (
+                    <div className="space-y-1.5 pt-2">
+                      <h4 className="text-[11px] font-black text-amber-600 uppercase tracking-wider">Avaliações Identificadas ({dryRunResult.avaliacoes.length})</h4>
+                      <div className="space-y-1.5">
+                        {dryRunResult.avaliacoes.map((av: any, i: number) => (
+                          <div key={i} className="p-3 border border-slate-100 bg-slate-50/50 rounded-xl text-xs space-y-1.5">
+                            <div className="flex justify-between items-center">
+                              <span className="font-bold text-slate-800">Técnico: {av.nome_tecnico}</span>
+                              <div className="flex items-center gap-1.5 text-[10px]">
+                                <span className="bg-red-50 text-red-600 border border-red-100 px-1.5 py-0.5 rounded font-bold uppercase">{av.status_atual}</span>
+                                <span className="text-slate-400">➔</span>
+                                <span className={`${av.status_proposto === 'REVISAO_MANUAL' ? 'bg-amber-50 text-amber-600 border-amber-100' : 'bg-emerald-50 text-emerald-600 border-emerald-100'} px-1.5 py-0.5 rounded font-bold uppercase`}>{av.status_proposto}</span>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1 text-[9px] font-black uppercase text-slate-400 bg-slate-100/60 px-1.5 py-0.5 rounded self-start w-fit">
+                              <Search size={10} />
+                              <span>Dedução: {av.metodo_determinacao}</span>
+                            </div>
+                            <p className="text-[10px] text-slate-400 leading-relaxed font-semibold">Motivo: {av.motivo}</p>
+                            <p className="text-[9px] text-slate-300 font-medium">Avaliação ID: {av.id_interno} ({av.data_avaliacao})</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {dryRunResult.total_afetados === 0 && (
+                    <div className="py-8 text-center text-slate-400 space-y-1">
+                      <CheckCircle2 className="text-emerald-500 mx-auto" size={28} />
+                      <p className="text-xs font-bold text-slate-600">Nenhuma inconsistência encontrada!</p>
+                      <p className="text-[10px] text-slate-400">Todos os portais e avaliações estão em perfeita consistência de status.</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Rollback Details block */}
+                {correctionSuccessResult && correctionSuccessResult.how_to_undo && (
+                  <div className="bg-slate-900 border border-slate-850 p-4 rounded-2xl space-y-2">
+                    <h5 className="text-[11px] font-black text-indigo-400 uppercase tracking-wider flex items-center gap-1">
+                      <Database size={12} />
+                      Procedimento de Reversão (Undo SQL)
+                    </h5>
+                    <p className="text-[10px] text-slate-400 font-semibold leading-relaxed">
+                      Caso necessite desfazer esta ação, execute as seguintes queries SQL no console D1 da Cloudflare:
+                    </p>
+                    <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 max-h-[140px] overflow-y-auto">
+                      <pre className="text-[9px] font-mono text-slate-300 leading-normal select-all">
+                        {correctionSuccessResult.how_to_undo.queries.join('\n')}
+                      </pre>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Actions Footer */}
+            <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
+              <button
+                type="button"
+                onClick={() => setIsCorrectionModalOpen(false)}
+                className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-500 font-extrabold text-xs rounded-xl transition-all cursor-pointer"
+                disabled={isApplyingCorrection}
+              >
+                {correctionSuccessResult ? "Fechar" : "Cancelar"}
+              </button>
+
+              {!correctionSuccessResult && dryRunResult && dryRunResult.total_afetados > 0 && (
+                <button
+                  type="button"
+                  onClick={applyCorrection}
+                  disabled={isApplyingCorrection}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-sm shadow-indigo-100"
+                >
+                  {isApplyingCorrection ? (
+                    <>
+                      <RefreshCw size={14} className="animate-spin" />
+                      <span>Aplicando Correções...</span>
+                    </>
+                  ) : (
+                    <>
+                      <History size={14} />
+                      <span>Aplicar Higienização</span>
+                    </>
+                  )}
+                </button>
+              )}
             </div>
           </motion.div>
         </div>

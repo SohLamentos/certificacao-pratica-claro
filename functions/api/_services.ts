@@ -294,50 +294,6 @@ export class EvidenceService {
       }
     }
 
-    // Check if certification is fully resolved
-    const { results: allEvs } = await db.prepare(
-      "SELECT etapa, status_ia, decisao_cq FROM ia_evidencias WHERE certificacao_id = ?"
-    ).bind(certificacaoId).all();
-
-    const mandatoryStages = [
-      "Identificação do técnico",
-      "Evidência da instalação física",
-      "Evidência da ONT/equipamento",
-      "Evidência dos níveis de sinal",
-      "Evidência do Wi-Fi configurado",
-      "Evidência de organização/acabamento",
-      "Evidência final com cliente/local"
-    ];
-
-    const evsMap = new Map<string, any>();
-    allEvs.forEach((e: any) => evsMap.set(e.etapa, e));
-
-    let allResolved = true;
-    let hasReprovado = false;
-
-    for (const stage of mandatoryStages) {
-      const ev = evsMap.get(stage);
-      if (!ev) {
-        allResolved = false;
-      } else {
-        const decision = ev.decisao_cq;
-        if (!decision) {
-          allResolved = false;
-        } else if (decision === 'REPROVADA' || decision === 'Reprovar' || decision === 'REPROVADO') {
-          hasReprovado = true;
-        }
-      }
-    }
-
-    if (allResolved) {
-      const finalStatus = hasReprovado ? 'REPROVADA' : 'APROVADA';
-      await db.prepare(
-        "UPDATE avaliacoes SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-      ).bind(finalStatus, certificacaoId).run();
-      Logger.info(`Avaliação ${certificacaoId} finalizada automaticamente como ${finalStatus}`);
-      await EvaluationService.handleEvaluationFinalization(db, certificacaoId, finalStatus);
-    }
-
     return { success: true };
   }
 

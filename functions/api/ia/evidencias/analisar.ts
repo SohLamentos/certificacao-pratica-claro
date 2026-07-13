@@ -1,4 +1,4 @@
-import { initDb, Env, jsonResponse } from '../../_db';
+import { initDb, Env, jsonResponse, getLocalDateString } from '../../_db';
 import { getAppConfig } from '../../_config';
 import { logEvent, LogLevel } from '../../_logger';
 import { GoogleGenAI, Type } from '@google/genai';
@@ -228,7 +228,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     }
 
     // 5. Validar limites de IA (Bloqueio duro se atingido)
-    const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const todayStr = getLocalDateString(); // YYYY-MM-DD
     const monthStr = todayStr.substring(0, 7); // YYYY-MM
 
     // Query daily and monthly active executions

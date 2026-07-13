@@ -2,6 +2,66 @@ import { Env, initDb, jsonResponse } from './_db';
 import { AuthService } from './_services';
 import { Logger } from './_logger';
 
+async function executeWithSecurityAndMasking(
+  context: any,
+  nextAction: () => Promise<Response>,
+  env: Env,
+  url: URL
+): Promise<Response> {
+  try {
+    const response = await nextAction();
+
+    // Standardize all error responses to never return stack traces or database internals
+    if (response.status === 500) {
+      let errorDetail = "Erro 500 retornado pelo endpoint";
+      try {
+        const cloned = response.clone();
+        errorDetail = await cloned.text();
+      } catch (e) {}
+
+      Logger.error(`Erro 500 na rota ${url.pathname}: ${errorDetail}`);
+      try {
+        await env.DB.prepare(`
+          INSERT INTO app_logs (tipo, evento, usuario_id, perfil, ip_hash, user_agent_hash, metadata_json)
+          VALUES ('ERROR', 'ERRO_RETORNADO_ENDPOINT', 'sistema', 'sistema', '', '', ?)
+        `).bind(JSON.stringify({
+          pathname: url.pathname,
+          detail: errorDetail
+        })).run();
+      } catch (logErr) {
+        console.error("Erro ao registrar log de erro de endpoint:", logErr);
+      }
+
+      return jsonResponse({
+        success: false,
+        error: "Erro Interno",
+        message: "Ocorreu um erro interno de processamento."
+      }, 500);
+    }
+
+    return response;
+  } catch (err: any) {
+    Logger.error(`Erro não tratado na rota ${url.pathname}:`, err);
+    try {
+      await env.DB.prepare(`
+        INSERT INTO app_logs (tipo, evento, usuario_id, perfil, ip_hash, user_agent_hash, metadata_json)
+        VALUES ('ERROR', 'ERRO_NAO_TRATADO', 'sistema', 'sistema', '', '', ?)
+      `).bind(JSON.stringify({
+        pathname: url.pathname,
+        error: String(err.message || err),
+        stack: err.stack || null
+      })).run();
+    } catch (logErr) {
+      console.error("Erro ao registrar log de erro não tratado:", logErr);
+    }
+    return jsonResponse({
+      success: false,
+      error: "Erro Interno",
+      message: "Ocorreu um erro interno de processamento."
+    }, 500);
+  }
+}
+
 export const onRequest: PagesFunction<Env> = async (context) => {
   const { request, env } = context;
   const url = new URL(request.url);
@@ -16,8 +76,10 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
   // Bypass authentication and other checks if ENABLE_AUTH is not set to true (for development/MVP testing)
   if (env.ENABLE_AUTH !== "true") {
-    const response = await context.next();
-    // Inject authEnabled: false header or standard response verification if needed
+    const response = await executeWithSecurityAndMasking(context, async () => {
+      const resp = await context.next();
+      return resp;
+    }, env, url);
     response.headers.set("X-Auth-Enabled", "false");
     return response;
   }
@@ -125,7 +187,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     (context as any).data.user = userPayload;
 
     // Execute downstream handlers
-    const response = await context.next();
+    const response = await executeWithSecurityAndMasking(context, async () => {
+      return await context.next();
+    }, env, url);
 
     // Check if the downstream handler fell back to serving an HTML page (like index.html) for an API route
     const contentType = response.headers.get("Content-Type") || "";
@@ -137,17 +201,6 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         message: `A rota de API '${url.pathname}' não foi encontrada ou está indisponível.`,
         data: null
       }, 404);
-    }
-
-    // Standardize all error responses to never return stack traces
-    if (response.status === 500) {
-      Logger.error(`Erro interno 500 retornado pelo endpoint: ${url.pathname}`);
-      return jsonResponse({
-        success: false,
-        error: "Erro Interno",
-        message: "Ocorreu um erro inesperado no processamento da rota.",
-        data: null
-      }, 500);
     }
 
     return response;

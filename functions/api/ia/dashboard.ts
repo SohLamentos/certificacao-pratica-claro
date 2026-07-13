@@ -1,4 +1,4 @@
-import { initDb, Env, jsonResponse } from '../_db';
+import { initDb, Env, jsonResponse, getLocalDateString } from '../_db';
 
 export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   try {
@@ -6,7 +6,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     const url = new URL(request.url);
 
     // Economy & Admin Indicators
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getLocalDateString();
     const logsTodayRow = await env.DB.prepare(
       "SELECT COUNT(*) as cnt FROM ia_analises_logs WHERE ia_requested_at LIKE ?"
     ).bind(`${todayStr}%`).first() as any;

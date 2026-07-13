@@ -25,6 +25,20 @@ import { getDynamicChecklistItems, calcularResultadoDinamico, getDynamicCertific
 import { apiFetch } from '../lib/api';
 import { useCallback } from 'react';
 
+export const normalizeStatus = (status: string): string => {
+  if (!status) return '';
+  const norm = status.toUpperCase().trim().replace(' ', '_');
+  if (norm === 'EM_AND_AMENTO' || norm === 'EM_ANDAMENTO') {
+    return 'EM_ANDAMENTO';
+  }
+  return norm;
+};
+
+export const isStatusFinal = (status: string): boolean => {
+  const norm = normalizeStatus(status);
+  return ['APROVADA', 'APROVADO', 'REPROVADA', 'REPROVADO', 'CANCELADA', 'CANCELADO', 'NO_SHOW', 'FINALIZADA'].includes(norm);
+};
+
 interface CQAvaliacoesDoDiaProps {
   evaluations: Avaliacao[];
   onSelectEvaluation: (evaluation: Avaliacao) => void;
@@ -187,11 +201,7 @@ export default function CQAvaliacoesDoDia({
 
       // Only show AGENDADA or in-progress evaluations for CQ daily execution
       const status = e.status as string;
-      const isEligible = status === 'AGENDADA' || 
-                         status === 'EM_AND_AMENTO' || 
-                         status === 'EM_ANDAMENTO' || 
-                         status === 'EM ANDAMENTO' || 
-                         status === 'Rascunho';
+      const isEligible = !isStatusFinal(status);
       if (!isEligible) return false;
 
       // Perfil must match
@@ -356,7 +366,7 @@ export default function CQAvaliacoesDoDia({
               {filtered.map((item) => {
                 const statusDetails = getStatusDisplay(item.status);
                 const TechIcon = getTechIcon(item.tipoCertificacao);
-                const isFinalized = item.status === 'FINALIZADA' || item.status === 'Concluída' || item.status === 'APROVADA' || item.status === 'REPROVADA';
+                const isFinalized = isStatusFinal(item.status);
                 const nota = item.notaTeorica !== undefined && item.notaTeorica !== null && String(item.notaTeorica) !== "" ? Number(item.notaTeorica) : ((item as any).nota_teorica !== undefined && (item as any).nota_teorica !== null && String((item as any).nota_teorica) !== "" ? Number((item as any).nota_teorica) : null);
                 const hasTeorica = nota !== null && Number.isFinite(nota);
                 const isTeoricaReprovado = hasTeorica && nota < 7;
@@ -399,8 +409,8 @@ export default function CQAvaliacoesDoDia({
                     {/* Status vertical accent border */}
                     <div className={`w-1.5 shrink-0 ${
                       isFinalized
-                        ? (finalResult === 'APROVADO' || item.status === 'APROVADA' ? 'bg-emerald-500' : 'bg-claro-red')
-                        : item.status === 'EM_AND_AMENTO' || item.status === 'EM_ANDAMENTO' || item.status === 'EM ANDAMENTO' || item.status === 'Rascunho'
+                        ? (finalResult === 'APROVADO' || normalizeStatus(item.status) === 'APROVADA' ? 'bg-emerald-500' : 'bg-claro-red')
+                        : normalizeStatus(item.status) === 'EM_AND_AMENTO' || normalizeStatus(item.status) === 'EM_ANDAMENTO' || item.status === 'Rascunho'
                           ? 'bg-amber-500'
                           : 'bg-blue-500'
                     }`}></div>

@@ -26,7 +26,8 @@ async function verifyPreflightToken(env: Env, tokenStr: string): Promise<any | n
     if (parts.length !== 2) return null;
     const [base64Payload, signature] = parts;
     const payloadStr = decodeURIComponent(escape(atob(base64Payload)));
-    const secret = env.IMAGE_SIGNING_SECRET || "fallback_preflight_secret";
+    const secret = env.IMAGE_SIGNING_SECRET;
+    if (!secret) return null;
     const expectedSignature = await computeHMAC("evidence-preflight:" + payloadStr, secret);
     if (signature !== expectedSignature) {
       return null;
@@ -48,6 +49,26 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const token = params.token as string;
     const clientIp = request.headers.get("cf-connecting-ip") || request.headers.get("x-real-ip") || "127.0.0.1";
     const userAgent = request.headers.get("user-agent") || "";
+
+    if (!env.IMAGE_SIGNING_SECRET) {
+      try {
+        await env.DB.prepare(`
+          INSERT INTO app_logs (tipo, evento, usuario_id, perfil, ip_hash, user_agent_hash, metadata_json)
+          VALUES ('ERROR', 'FALHA_CONFIG_CHAVE_ASSINATURA', 'sistema', 'sistema', '', '', ?)
+        `).bind(JSON.stringify({
+          erro: "IMAGE_SIGNING_SECRET não configurado",
+          token_hash: token
+        })).run();
+      } catch (logErr) {
+        console.error("Erro ao registrar log direto:", logErr);
+      }
+
+      return jsonResponse({
+        success: false,
+        error: "Erro de Configuração",
+        message: "O serviço de envio está temporariamente indisponível devido a pendências de configuração do servidor. Por favor, contate o administrador do CQ."
+      }, 500);
+    }
 
     if (!token) {
       return jsonResponse({ success: false, error: "Token ausente" }, 400);
@@ -199,7 +220,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       `).bind(image_hash, finalR2Key)
     );
 
-    const image_signature = await computeHMAC(`${image_hash}:tecnico:${portal.avaliacao_id}`, env.IMAGE_SIGNING_SECRET || "fallback_secret");
+    const image_signature = await computeHMAC(`${image_hash}:tecnico:${portal.avaliacao_id}`, env.IMAGE_SIGNING_SECRET!);
     const isRepetida = action === "UPLOAD_WITH_REUSE_ALERT" ? 1 : 0;
     const repetidaAvalId = action === "UPLOAD_WITH_REUSE_ALERT" ? (repetida_avaliacao_id || null) : null;
 

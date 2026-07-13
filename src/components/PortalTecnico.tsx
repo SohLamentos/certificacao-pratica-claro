@@ -261,6 +261,59 @@ async function calculateSha256(base64String: string): Promise<string> {
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+function getValidUploadedMissions(evs: any[], mis: any[]): Set<string> {
+  const activeMissionsMap = new Map<string, any>();
+  for (const m of mis) {
+    if (m.ativa === 1 || m.ativa === true) {
+      activeMissionsMap.set(m.id, m);
+    }
+  }
+
+  const candidates = evs.filter(ev => {
+    if (ev.arquivo_excluido === 1 || ev.arquivo_excluido === true) return false;
+    if (!activeMissionsMap.has(ev.missao_id)) return false;
+    if (!ev.status) return false;
+    return true;
+  });
+
+  candidates.sort((a, b) => {
+    const timeA = new Date(a.enviada_em || a.created_at || 0).getTime();
+    const timeB = new Date(b.enviada_em || b.created_at || 0).getTime();
+    if (timeA !== timeB) return timeA - timeB;
+    return String(a.id).localeCompare(String(b.id));
+  });
+
+  const hashFirstUseMission = new Map<string, string>();
+  const valid = new Set<string>();
+
+  for (const ev of candidates) {
+    const hash = ev.image_hash;
+    const missionId = ev.missao_id;
+    const m = activeMissionsMap.get(missionId)!;
+
+    if (!hashFirstUseMission.has(hash)) {
+      hashFirstUseMission.set(hash, missionId);
+      valid.add(missionId);
+    } else {
+      const firstMissionId = hashFirstUseMission.get(hash)!;
+      if (firstMissionId === missionId) {
+        continue;
+      }
+      const firstMission = activeMissionsMap.get(firstMissionId);
+      const currentMission = m;
+
+      const firstAllows = firstMission?.permite_reuso_mesma_imagem === 1 || firstMission?.permite_reuso_mesma_imagem === true;
+      const currentAllows = currentMission?.permite_reuso_mesma_imagem === 1 || currentMission?.permite_reuso_mesma_imagem === true;
+
+      if (firstAllows && currentAllows) {
+        valid.add(missionId);
+      }
+    }
+  }
+
+  return valid;
+}
+
 export default function PortalTecnico({ token }: PortalTecnicoProps) {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [sessionHash, setSessionHash] = useState<string>('');
@@ -324,8 +377,8 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
 
       // Auto-expand first pending mission
       if (data.missoes && data.missoes.length > 0) {
-        const uploadedIds = (data.evidencias || []).map((e: any) => e.missao_id);
-        const firstPending = data.missoes.find((m: any) => !uploadedIds.includes(m.id));
+        const validMissionsSet = getValidUploadedMissions(data.evidencias || [], data.missoes);
+        const firstPending = data.missoes.find((m: any) => !validMissionsSet.has(m.id));
         if (firstPending) {
           setExpandedMission(firstPending.id);
         } else {
@@ -636,8 +689,8 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
     if (!currentToken) return;
 
     // Check if there are mandatory pending missions
-    const uploadedIds = evidencias.map(e => e.missao_id);
-    const pendingMandatory = missoes.filter(m => m.obrigatoria && !uploadedIds.includes(m.id));
+    const validMissionsSet = getValidUploadedMissions(evidencias, missoes);
+    const pendingMandatory = missoes.filter(m => m.obrigatoria && !validMissionsSet.has(m.id));
 
     if (pendingMandatory.length > 0) {
       alert(`Você precisa enviar as fotos de todas as missões obrigatórias antes de finalizar.`);
@@ -854,9 +907,10 @@ export default function PortalTecnico({ token }: PortalTecnicoProps) {
 
   // Checklist counts
   const uploadedEvs = evidencias || [];
-  const uploadedIds = uploadedEvs.map(e => e.missao_id);
+  const validMissionsSet = getValidUploadedMissions(uploadedEvs, missoes);
+  const uploadedIds = Array.from(validMissionsSet);
   const mandatoryMissions = missoes.filter(m => m.obrigatoria);
-  const totalMandatoryUploaded = mandatoryMissions.filter(m => uploadedIds.includes(m.id)).length;
+  const totalMandatoryUploaded = mandatoryMissions.filter(m => validMissionsSet.has(m.id)).length;
   const totalMandatory = mandatoryMissions.length;
   const isFullyComplete = totalMandatoryUploaded === totalMandatory;
 

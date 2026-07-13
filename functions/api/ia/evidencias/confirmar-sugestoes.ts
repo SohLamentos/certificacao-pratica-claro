@@ -101,13 +101,16 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     }
 
     // B) Sync checklist responses for backward compatibility with D1 checklist
-    // First, let's load all current mapped responses to do differential updates, or just wipe and sync
-    // It's safer to read the current responses, override the ones mapped to these missions, and sync them back!
-    const curResponsesRows = await env.DB.prepare("SELECT * FROM respostas WHERE avaliacao_id = ?").bind(avaliacao_id).all();
-    const responsesMap = new Map<number, string>();
-    (curResponsesRows.results || []).forEach((r: any) => {
-      responsesMap.set(r.item_id, r.resposta);
-    });
+    // Fetch all items with their critical status for this certification/evaluation
+    const itemsRows = await env.DB.prepare(
+      "SELECT id, critico FROM itens WHERE certificacao_id = ?"
+    ).bind(avaliacao.certificacao_id).all() as { results: any[] };
+    const itemsList = itemsRows.results || [];
+    const criticalItemIds = new Set<number>(
+      itemsList.filter((it: any) => it.critico === 1 || it.critico === true).map((it: any) => Number(it.id))
+    );
+
+    let hasSkippedCritical = false;
 
     // Update with IA suggestions
     for (const missionId of missionIds) {
@@ -119,40 +122,46 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
         const itemId = parseInt(itemIdStr, 10);
         if (isNaN(itemId)) continue;
 
+        const isCritical = criticalItemIds.has(itemId);
+        const hasExplicitOverride = Object.prototype.hasOwnProperty.call(decisoes_override, missionId);
+
+        // Itens críticos sempre precisam de confirmação explícita individual e não podem ser confirmados silenciosamente em massa.
+        if (isCritical && !hasExplicitOverride) {
+          hasSkippedCritical = true;
+          continue;
+        }
+
         const atende = (itemData as any).atende;
         // Map to standard responses 'CONFORME' or 'NAO_CONFORME'
         const mappedResp = atende ? 'CONFORME' : 'NAO_CONFORME';
-        responsesMap.set(itemId, mappedResp);
+
+        // Check if there is an existing response for this item in this evaluation
+        const existing = await env.DB.prepare(
+          "SELECT id FROM respostas WHERE avaliacao_id = ? AND item_id = ?"
+        ).bind(avaliacao_id, itemId).first() as any;
+
+        if (existing) {
+          await env.DB.prepare(
+            "UPDATE respostas SET resposta = ? WHERE id = ?"
+          ).bind(mappedResp, existing.id).run();
+        } else {
+          await env.DB.prepare(
+            "INSERT INTO respostas (avaliacao_id, item_id, resposta) VALUES (?, ?, ?)"
+          ).bind(avaliacao_id, itemId, mappedResp).run();
+        }
       }
     }
 
-    // Wiping responses for this evaluation and re-inserting synced answers
-    await env.DB.prepare("DELETE FROM respostas WHERE avaliacao_id = ?").bind(avaliacao_id).run();
-    for (const [itemId, respValue] of responsesMap.entries()) {
-      await env.DB.prepare(
-        "INSERT INTO respostas (avaliacao_id, item_id, resposta) VALUES (?, ?, ?)"
-      ).bind(avaliacao_id, itemId, respValue).run();
-    }
+    const finalIaStatusConsolidado = hasSkippedCritical ? 'CONFIRMADA_PARCIAL' : 'CONFIRMADA_CQ';
 
-    // C) Calculate new status based on overall conforming answers
-    let allConforme = true;
-    for (const respVal of responsesMap.values()) {
-      if (respVal === 'NAO_CONFORME') {
-        allConforme = false;
-        break;
-      }
-    }
-    const proposedStatus = allConforme ? 'APROVADA' : 'REPROVADA';
-
-    // D) Update evaluation consolidated status
+    // D) Update evaluation consolidated status without touching operational status
     await env.DB.prepare(`
       UPDATE avaliacoes 
       SET 
-        ia_status_consolidado = 'CONFIRMADA_CQ',
-        status = ?,
+        ia_status_consolidado = ?,
         updated_at = CURRENT_TIMESTAMP 
       WHERE id = ?
-    `).bind(proposedStatus, avaliacao_id).run();
+    `).bind(finalIaStatusConsolidado, avaliacao_id).run();
 
     // Audit Log event
     await logEvent(env, {
@@ -164,14 +173,15 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       userAgent,
       metadata: { 
         avaliacao_id, 
-        status_final: proposedStatus
+        ia_status_consolidado: finalIaStatusConsolidado
       }
     });
 
     return jsonResponse({
       success: true,
       mensagem: "Sugestões consolidadas aplicadas com sucesso para todas as etapas!",
-      status_final_avaliacao: proposedStatus
+      status_final_avaliacao: avaliacao.status,
+      ia_status_consolidado: finalIaStatusConsolidado
     });
 
   } catch (err: any) {

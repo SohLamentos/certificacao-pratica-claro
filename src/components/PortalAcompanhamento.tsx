@@ -47,6 +47,53 @@ interface TrackerItem {
   repeatedCount: number;
 }
 
+const getPortalStatusDisplay = (status: string) => {
+  const norm = String(status).toUpperCase();
+  switch (norm) {
+    case 'LIBERADO':
+      return {
+        label: 'LIBERADO',
+        color: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+      };
+    case 'EM_ENVIO':
+      return {
+        label: 'EM ENVIO',
+        color: 'bg-amber-50 text-amber-700 border-amber-200',
+      };
+    case 'ENVIO_COMPLETO':
+      return {
+        label: 'ENVIO COMPLETO',
+        color: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+      };
+    case 'AGUARDANDO_IA':
+    case 'AGUARDANDO_ANALISE':
+      return {
+        label: 'AGUARDANDO IA',
+        color: 'bg-blue-50 text-blue-700 border-blue-200',
+      };
+    case 'ANALISADO':
+      return {
+        label: 'ANALISADO',
+        color: 'bg-teal-50 text-teal-700 border-teal-200',
+      };
+    case 'REVISAO_CQ':
+      return {
+        label: 'REVISÃO CQ',
+        color: 'bg-rose-50 text-rose-700 border-rose-200',
+      };
+    case 'ENCERRADO':
+      return {
+        label: 'ENCERRADO',
+        color: 'bg-slate-100 text-slate-600 border-slate-200',
+      };
+    default:
+      return {
+        label: norm.replace('_', ' '),
+        color: 'bg-slate-50 text-slate-500 border-slate-150',
+      };
+  }
+};
+
 export default function PortalAcompanhamento() {
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
@@ -319,8 +366,8 @@ export default function PortalAcompanhamento() {
     if (!searchMatch) return false;
 
     // Filter type match
-    const isClosedAval = ['APROVADA', 'APROVADO', 'REPROVADA', 'REPROVADO', 'CANCELADA', 'CANCELADO', 'NO_SHOW'].includes(String(item.statusAvaliacao).toUpperCase());
-    const isClosedPortal = !['LIBERADO', 'EM_ENVIO'].includes(String(item.portalStatus).toUpperCase());
+    const isClosedAval = ['APROVADA', 'APROVADO', 'REPROVADA', 'REPROVADO', 'CANCELADA', 'CANCELADO', 'NO_SHOW', 'FINALIZADA'].includes(String(item.statusAvaliacao).toUpperCase().trim());
+    const isClosedPortal = ['BLOQUEADO', 'EXPIRADO', 'ENCERRADO', 'ENCERRADO_APROVADO', 'ENCERRADO_REPROVADO', 'ENCERRADO_CANCELADO', 'ENCERRADO_NOSHOW'].includes(String(item.portalStatus).toUpperCase().trim());
 
     switch (selectedFilter) {
       case 'sem_fotos':
@@ -657,7 +704,9 @@ export default function PortalAcompanhamento() {
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             {filteredData.map((item) => {
-              const isClosed = ['APROVADA', 'APROVADO', 'REPROVADA', 'REPROVADO', 'CANCELADA', 'CANCELADO', 'NO_SHOW', 'ENCERRADO_APROVADO', 'ENCERRADO_REPROVADO', 'ENCERRADO_CANCELADO', 'ENCERRADO_NOSHOW', 'EXPIRADO'].includes(String(item.statusAvaliacao).toUpperCase()) || !['LIBERADO', 'EM_ENVIO'].includes(String(item.portalStatus).toUpperCase());
+              const isClosedAval = ['APROVADA', 'APROVADO', 'REPROVADA', 'REPROVADO', 'CANCELADA', 'CANCELADO', 'NO_SHOW', 'FINALIZADA'].includes(String(item.statusAvaliacao).toUpperCase().trim());
+              const isClosedPortal = ['BLOQUEADO', 'EXPIRADO', 'ENCERRADO', 'ENCERRADO_APROVADO', 'ENCERRADO_REPROVADO', 'ENCERRADO_CANCELADO', 'ENCERRADO_NOSHOW'].includes(String(item.portalStatus).toUpperCase().trim());
+              const isClosed = isClosedAval || isClosedPortal;
               
               // Copy Portal URL link
               const directPortalUrl = `${window.location.origin}/portal-tecnico`;
@@ -687,16 +736,36 @@ export default function PortalAcompanhamento() {
                       <p className="text-[10px] text-slate-500 font-bold">Login: <span className="font-mono text-slate-700">{item.login}</span></p>
                     </div>
 
-                    <div className="text-right shrink-0">
-                      <span className={`inline-block text-[9px] font-black uppercase px-2 py-0.5 rounded-full border ${
-                        isClosed 
-                          ? 'bg-slate-100 text-slate-600 border-slate-200' 
-                          : 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                      }`}>
-                        {isClosed ? 'Encerrado' : 'Ativo / Liberado'}
-                      </span>
-                      <div className="text-[9px] font-black text-slate-400 mt-1.5">
-                        Aval: <strong className="text-slate-600">{item.statusAvaliacao}</strong>
+                    <div className="flex flex-col gap-1.5 text-right shrink-0">
+                      <div>
+                        <span className="block text-[8px] font-black uppercase text-slate-400 tracking-wider">Avaliação</span>
+                        <span className={`inline-block text-[9px] font-black uppercase px-2 py-0.5 rounded-full border ${
+                          ['APROVADA', 'APROVADO', 'REPROVADA', 'REPROVADO', 'CANCELADA', 'CANCELADO', 'NO_SHOW', 'FINALIZADA'].includes(String(item.statusAvaliacao).toUpperCase().trim())
+                            ? 'bg-slate-100 text-slate-600 border-slate-200'
+                            : 'bg-blue-50 text-blue-700 border-blue-200'
+                        }`}>
+                          {item.statusAvaliacao}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="block text-[8px] font-black uppercase text-slate-400 tracking-wider">Portal</span>
+                        <span className={`inline-block text-[9px] font-black uppercase px-2 py-0.5 rounded-full border ${
+                          getPortalStatusDisplay(item.portalStatus).color
+                        }`}>
+                          {getPortalStatusDisplay(item.portalStatus).label}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="block text-[8px] font-black uppercase text-slate-400 tracking-wider">IA</span>
+                        <span className={`inline-block text-[9px] font-black uppercase px-2 py-0.5 rounded-full border ${
+                          item.statusIa === 'COMPLETO_APROVADO' 
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                            : item.statusIa === 'REVISAO_NECESSARIA'
+                            ? 'bg-rose-50 text-rose-700 border-rose-200'
+                            : 'bg-blue-50 text-blue-700 border-blue-200'
+                        }`}>
+                          {item.statusIa ? item.statusIa.replace('_', ' ') : 'PENDENTE'}
+                        </span>
                       </div>
                     </div>
                   </div>

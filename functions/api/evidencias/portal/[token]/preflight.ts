@@ -23,7 +23,10 @@ async function computeHMAC(text: string, secret: string): Promise<string> {
 }
 
 async function generatePreflightToken(env: Env, payload: any): Promise<string> {
-  const secret = env.IMAGE_SIGNING_SECRET || "fallback_preflight_secret";
+  const secret = env.IMAGE_SIGNING_SECRET;
+  if (!secret) {
+    throw new Error("IMAGE_SIGNING_SECRET_MISSING");
+  }
   const payloadStr = JSON.stringify(payload);
   const enc = new TextEncoder();
   const signature = await computeHMAC("evidence-preflight:" + payloadStr, secret);
@@ -38,6 +41,26 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const token = params.token as string;
     const clientIp = request.headers.get("cf-connecting-ip") || request.headers.get("x-real-ip") || "127.0.0.1";
     const userAgent = request.headers.get("user-agent") || "";
+
+    if (!env.IMAGE_SIGNING_SECRET) {
+      try {
+        await env.DB.prepare(`
+          INSERT INTO app_logs (tipo, evento, usuario_id, perfil, ip_hash, user_agent_hash, metadata_json)
+          VALUES ('ERROR', 'FALHA_CONFIG_CHAVE_ASSINATURA', 'sistema', 'sistema', '', '', ?)
+        `).bind(JSON.stringify({
+          erro: "IMAGE_SIGNING_SECRET não configurado",
+          token_hash: token
+        })).run();
+      } catch (logErr) {
+        console.error("Erro ao registrar log direto:", logErr);
+      }
+
+      return jsonResponse({
+        success: false,
+        error: "Erro de Configuração",
+        message: "O serviço de envio está temporariamente indisponível devido a pendências de configuração do servidor. Por favor, contate o administrador do CQ."
+      }, 500);
+    }
 
     if (!token) {
       return jsonResponse({ success: false, error: "Token ausente" }, 400);

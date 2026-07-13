@@ -94,17 +94,71 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
         };
       }
 
-      // Fetch uploaded evidences count
-      const countRes = await env.DB.prepare(
-        "SELECT COUNT(*) as cnt FROM evidencias WHERE portal_id = ?"
-      ).bind(portal.id).first() as any;
-      const uploadedCount = countRes ? countRes.cnt : 0;
+      // Fetch active missions
+      const missionsRes = await env.DB.prepare(`
+        SELECT id, obrigatoria, permite_reuso_mesma_imagem
+        FROM missoes_evidencias 
+        WHERE certificacao_id = ? AND ativa = 1
+      `).bind(ev.certificacao_id).all();
+      const activeMissions = missionsRes.results || [];
+      const totalMissoes = activeMissions.length;
 
-      // Fetch missoes count
-      const misCountRes = await env.DB.prepare(
-        "SELECT COUNT(*) as cnt FROM missoes_evidencias WHERE certificacao_id = ? AND ativa = 1"
-      ).bind(ev.certificacao_id).first() as any;
-      const totalMissoes = misCountRes ? misCountRes.cnt : 0;
+      // Fetch uploaded evidences
+      const evs = await env.DB.prepare(`
+        SELECT id, missao_id, image_hash, status, repetida, arquivo_excluido, enviada_em, created_at 
+        FROM evidencias 
+        WHERE portal_id = ?
+      `).bind(portal.id).all();
+      const evsResults = evs.results || [];
+
+      const activeMissionsMap = new Map<string, any>();
+      for (const m of activeMissions as any[]) {
+        activeMissionsMap.set(m.id, m);
+      }
+
+      const candidates = (evsResults as any[]).filter(ev => {
+        if (ev.arquivo_excluido === 1) return false;
+        if (!activeMissionsMap.has(ev.missao_id)) return false;
+        if (!ev.status) return false;
+        return true;
+      });
+
+      candidates.sort((a, b) => {
+        const timeA = new Date(a.enviada_em || a.created_at || 0).getTime();
+        const timeB = new Date(b.enviada_em || b.created_at || 0).getTime();
+        if (timeA !== timeB) return timeA - timeB;
+        return a.id.localeCompare(b.id);
+      });
+
+      const hashFirstUseMission = new Map<string, string>();
+      const validMissions = new Set<string>();
+
+      for (const ev of candidates) {
+        const hash = ev.image_hash;
+        const missionId = ev.missao_id;
+        const m = activeMissionsMap.get(missionId)!;
+
+        if (!hashFirstUseMission.has(hash)) {
+          hashFirstUseMission.set(hash, missionId);
+          validMissions.add(missionId);
+        } else {
+          const firstMissionId = hashFirstUseMission.get(hash)!;
+          if (firstMissionId === missionId) {
+            continue;
+          }
+          const firstMission = activeMissionsMap.get(firstMissionId);
+          const currentMission = m;
+
+          const firstAllows = firstMission?.permite_reuso_mesma_imagem === 1;
+          const currentAllows = currentMission?.permite_reuso_mesma_imagem === 1;
+
+          if (firstAllows && currentAllows) {
+            validMissions.add(missionId);
+          }
+        }
+      }
+
+      const uploadedCount = validMissions.size;
 
       portalsWithEvals.push({
         portalId: portal.id,

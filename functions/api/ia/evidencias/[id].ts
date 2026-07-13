@@ -99,23 +99,7 @@ export const onRequestDelete: PagesFunction<Env> = async ({ request, params, env
       login_hash
     ).run();
 
-    // 5. Update evaluation status if needed (e.g., if there are no more evidences)
-    const { results: remaining } = await env.DB.prepare(
-      "SELECT id FROM ia_evidencias WHERE certificacao_id = ?"
-    ).bind(evidence.certificacao_id).all();
 
-    if (remaining.length === 0) {
-      // Revert evaluation status to AGENDADA if there are no more uploaded evidences
-      const avaliacao = await env.DB.prepare(
-        "SELECT status FROM avaliacoes WHERE id = ?"
-      ).bind(evidence.certificacao_id).first() as any;
-
-      if (avaliacao && avaliacao.status === 'EM_ANDAMENTO') {
-        await env.DB.prepare(
-          "UPDATE avaliacoes SET status = 'AGENDADA', updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-        ).bind(evidence.certificacao_id).run();
-      }
-    }
 
     return jsonResponse({ success: true, message: "Evidência removida com sucesso." });
   } catch (error) {

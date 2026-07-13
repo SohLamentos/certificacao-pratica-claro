@@ -1,4 +1,4 @@
-import { initDb, Env, jsonResponse } from '../../_db';
+import { initDb, Env, jsonResponse, getLocalDateString } from '../../_db';
 import { getAppConfig } from '../../_config';
 import { logEvent, LogLevel } from '../../_logger';
 import { GoogleGenAI, Type } from '@google/genai';
@@ -77,7 +77,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     }
 
     // 2. Validate rate limits
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getLocalDateString();
     const monthStr = todayStr.substring(0, 7);
 
     const { count_ia_dia } = await env.DB.prepare(`
@@ -148,6 +148,13 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
         JSON.stringify(reusedResult),
         avaliacao_id
       ).run();
+
+      // Update portais_evidencias status to ANALISADO
+      await env.DB.prepare(`
+        UPDATE portais_evidencias
+        SET status = 'ANALISADO', updated_at = CURRENT_TIMESTAMP
+        WHERE avaliacao_id = ? AND status NOT IN ('EXPIRADO', 'BLOQUEADO')
+      `).bind(avaliacao_id).run();
 
       await logEvent(env, {
         tipo: LogLevel.INFO,
@@ -552,6 +559,13 @@ Exemplo de formato esperado:
       await sha256(JSON.stringify(analises_missoes)),
       avaliacao_id
     ).run();
+
+    // Update portais_evidencias status to ANALISADO
+    await env.DB.prepare(`
+      UPDATE portais_evidencias
+      SET status = 'ANALISADO', updated_at = CURRENT_TIMESTAMP
+      WHERE avaliacao_id = ? AND status NOT IN ('EXPIRADO', 'BLOQUEADO')
+    `).bind(avaliacao_id).run();
 
     // Log the consolidated call execution in ia_analises_logs
     await env.DB.prepare(`

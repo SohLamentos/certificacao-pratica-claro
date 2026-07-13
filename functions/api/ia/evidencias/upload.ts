@@ -1,4 +1,4 @@
-import { initDb, Env, jsonResponse } from '../../_db';
+import { initDb, Env, jsonResponse, getLocalDateString } from '../../_db';
 import { getAppConfig } from '../../_config';
 import { logEvent, LogLevel } from '../../_logger';
 import { applyRateLimit } from '../../_ratelimit';
@@ -329,7 +329,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 
     // 6. Execute automatic free analysis if permitted and within limits
     if (!reused && config.ENABLE_AI_AUTO_ANALYSIS) {
-      const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+      const todayStr = getLocalDateString(); // YYYY-MM-DD
       const monthStr = todayStr.substring(0, 7); // YYYY-MM
 
       // Check daily and monthly hard limits
@@ -668,43 +668,7 @@ Siga estritamente as regras operacionais fornecidas.`;
       });
     }
 
-    // Se for a primeira evidência da certificação, mudar status para EM_ANDAMENTO
-    const { results: allEvs } = await env.DB.prepare(
-      "SELECT id FROM ia_evidencias WHERE certificacao_id = ?"
-    ).bind(certificacao_id).all();
-
     let finalStatus = avaliacao.status;
-    if (allEvs.length === 1 && avaliacao.status === 'AGENDADA') {
-      finalStatus = 'EM_ANDAMENTO';
-      await env.DB.prepare(
-        "UPDATE avaliacoes SET status = 'EM_ANDAMENTO', updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-      ).bind(certificacao_id).run();
-    }
-
-    // Check if all 7 mandatory stages are submitted, to auto-advance to review pending
-    const mandatoryStages = [
-      "Identificação do técnico",
-      "Evidência da instalação física",
-      "Evidência da ONT/equipamento",
-      "Evidência dos níveis de sinal",
-      "Evidência do Wi-Fi configurado",
-      "Evidência de organização/acabamento",
-      "Evidência final com cliente/local"
-    ];
-
-    const { results: evsWithStages } = await env.DB.prepare(
-      "SELECT etapa FROM ia_evidencias WHERE certificacao_id = ?"
-    ).bind(certificacao_id).all();
-
-    const submittedStagesSet = new Set(evsWithStages.map((e: any) => e.etapa));
-    const allSubmitted = mandatoryStages.every(stage => submittedStagesSet.has(stage));
-
-    if (allSubmitted && (finalStatus === 'EM_ANDAMENTO' || finalStatus === 'AGENDADA')) {
-      finalStatus = 'AGUARDANDO_REVISAO_CQ';
-      await env.DB.prepare(
-        "UPDATE avaliacoes SET status = 'AGUARDANDO_REVISAO_CQ', updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-      ).bind(certificacao_id).run();
-    }
 
     // Get updated record
     const record = await env.DB.prepare(

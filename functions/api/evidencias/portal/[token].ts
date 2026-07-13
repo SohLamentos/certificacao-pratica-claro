@@ -36,7 +36,10 @@ async function computeHMAC(text: string, secret: string): Promise<string> {
 }
 
 async function generatePreflightToken(env: Env, payload: any): Promise<string> {
-  const secret = env.IMAGE_SIGNING_SECRET || "fallback_preflight_secret";
+  const secret = env.IMAGE_SIGNING_SECRET;
+  if (!secret) {
+    throw new Error("IMAGE_SIGNING_SECRET_MISSING");
+  }
   const payloadStr = JSON.stringify(payload);
   const enc = new TextEncoder();
   const signature = await computeHMAC("evidence-preflight:" + payloadStr, secret);
@@ -50,7 +53,8 @@ async function verifyPreflightToken(env: Env, tokenStr: string): Promise<any | n
     if (parts.length !== 2) return null;
     const [base64Payload, signature] = parts;
     const payloadStr = decodeURIComponent(escape(atob(base64Payload)));
-    const secret = env.IMAGE_SIGNING_SECRET || "fallback_preflight_secret";
+    const secret = env.IMAGE_SIGNING_SECRET;
+    if (!secret) return null;
     const expectedSignature = await computeHMAC("evidence-preflight:" + payloadStr, secret);
     if (signature !== expectedSignature) {
       return null;
@@ -527,7 +531,7 @@ async function executeCommitReference(context: any, data: any) {
     `).bind(image_hash, finalR2Key)
   );
 
-  const image_signature = await computeHMAC(`${image_hash}:tecnico:${portal.avaliacao_id}`, env.IMAGE_SIGNING_SECRET || "fallback_secret");
+  const image_signature = await computeHMAC(`${image_hash}:tecnico:${portal.avaliacao_id}`, env.IMAGE_SIGNING_SECRET!);
   const isRepetida = action === "UPLOAD_WITH_REUSE_ALERT" ? 1 : 0;
   const repetidaAvalId = action === "UPLOAD_WITH_REUSE_ALERT" ? (repetida_avaliacao_id || null) : null;
 
@@ -842,6 +846,26 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const token = params.token as string;
     const clientIp = request.headers.get("cf-connecting-ip") || request.headers.get("x-real-ip") || "127.0.0.1";
     const userAgent = request.headers.get("user-agent") || "";
+
+    if (!env.IMAGE_SIGNING_SECRET) {
+      try {
+        await env.DB.prepare(`
+          INSERT INTO app_logs (tipo, evento, usuario_id, perfil, ip_hash, user_agent_hash, metadata_json)
+          VALUES ('ERROR', 'FALHA_CONFIG_CHAVE_ASSINATURA', 'sistema', 'sistema', '', '', ?)
+        `).bind(JSON.stringify({
+          erro: "IMAGE_SIGNING_SECRET não configurado",
+          token_hash: token
+        })).run();
+      } catch (logErr) {
+        console.error("Erro ao registrar log direto:", logErr);
+      }
+
+      return jsonResponse({
+        success: false,
+        error: "Erro de Configuração",
+        message: "O serviço de envio está temporariamente indisponível devido a pendências de configuração do servidor. Por favor, contate o administrador do CQ."
+      }, 500);
+    }
 
     if (!token) {
       return jsonResponse({ success: false, error: "Token ausente" }, 400);
@@ -1515,18 +1539,6 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
              updated_at = ?
          WHERE id = ?
        `).bind(nowStr, portal.id).run();
-
-      const avaliacao = await env.DB.prepare(
-        "SELECT id, status FROM avaliacoes WHERE id = ?"
-      ).bind(portal.avaliacao_id).first() as any;
-
-      if (avaliacao && (avaliacao.status === "EM_ANDAMENTO" || avaliacao.status === "AGENDADO" || avaliacao.status === "AGENDADA")) {
-        await env.DB.prepare(`
-           UPDATE avaliacoes
-           SET status = 'AGUARDANDO_RESULTADO', updated_at = CURRENT_TIMESTAMP
-           WHERE id = ?
-         `).bind(portal.avaliacao_id).run();
-      }
 
       await logEvent(env, {
         tipo: LogLevel.AUDITORIA,
