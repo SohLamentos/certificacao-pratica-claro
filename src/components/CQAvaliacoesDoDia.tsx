@@ -25,6 +25,7 @@ import { getDynamicChecklistItems, calcularResultadoDinamico, getDynamicCertific
 import { apiFetch } from '../lib/api';
 import { useCallback } from 'react';
 
+
 export const normalizeStatus = (status: string): string => {
   if (!status) return '';
   const norm = status.toUpperCase().trim().replace(' ', '_');
