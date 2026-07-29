@@ -22,7 +22,7 @@ import {
   HelpCircle
 } from 'lucide-react';
 import { Avaliacao } from '../types';
-import { GPON_VETERANO_ITEMS, HFC_24_ITEMS, HFC_24_GROUPS, GPON_CAPACITACAO_ITEMS, GPON_CAPACITACAO_GROUPS } from '../data/checklist';
+import { getDynamicChecklistItems, getGroupsForCertificacao } from '../data/dynamicChecklist';
 
 interface DetailModalProps {
   evaluation: Avaliacao;
@@ -50,13 +50,47 @@ export default function DetailModal({ evaluation, onClose, onEdit }: DetailModal
   const isGponCapacitacao = evaluation.tipoCertificacao === 'GPON Capacitação';
   const isHfc24 = evaluation.tipoCertificacao === 'HFC Capacitação';
   const isActiveTech = isGponVeterano || isGponCapacitacao || isHfc24;
-  const activeItems = isGponVeterano 
-    ? GPON_VETERANO_ITEMS 
-    : (isGponCapacitacao ? GPON_CAPACITACAO_ITEMS : (isHfc24 ? HFC_24_ITEMS : []));
-  
-  const isGroupedChecklist = isHfc24 || isGponCapacitacao;
-  const activeGroups = isGponCapacitacao ? GPON_CAPACITACAO_GROUPS : (isHfc24 ? HFC_24_GROUPS : []);
+
+  // Load dynamic checklist items and groups (single source of truth)
+  const allDynamicItems = getDynamicChecklistItems();
+  const activeItems = allDynamicItems
+    .filter(item => item.certificacao === evaluation.tipoCertificacao && item.ativo)
+    .sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+
+  const activeGroups = getGroupsForCertificacao(evaluation.tipoCertificacao, activeItems);
+  const isGroupedChecklist = activeGroups.length > 0;
   const hasResults = evaluation.resultado !== undefined;
+
+  // Legacy ID compatibility (read-only mapping for old GPON Capacitação IDs)
+  const legacyIdMap: Record<number, number> = { 136: 36, 137: 37, 138: 38 };
+  const getResponseForItem = (id: number) => {
+    const anyEval: any = evaluation as any;
+    if (anyEval.checklistResponses && Object.prototype.hasOwnProperty.call(anyEval.checklistResponses, id)) {
+      return anyEval.checklistResponses[id];
+    }
+    const legacy = legacyIdMap[id];
+    if (legacy && anyEval.checklistResponses && Object.prototype.hasOwnProperty.call(anyEval.checklistResponses, legacy)) {
+      console.warn(`Legacy checklist response mapping used for evaluation ${evaluation.id}: ${legacy} -> ${id}`);
+      return anyEval.checklistResponses[legacy];
+    }
+    return undefined;
+  };
+
+  const [filter, setFilter] = React.useState<'All'|'Fez'|'NaoFez'|'NA'>('All');
+
+  const FilterButtons = () => (
+    <div className="inline-flex items-center bg-white/0 rounded-md divide-x">
+      {['All','Fez','NaoFez','NA'].map((f) => (
+        <button
+          key={f}
+          onClick={() => setFilter(f as any)}
+          className={`text-xs px-2 py-1 ${filter === f ? 'font-black text-claro-dark' : 'font-medium text-slate-500'} hover:underline`}
+        >
+          {f === 'All' ? 'Todos' : (f === 'Fez' ? 'Fez' : (f === 'NaoFez' ? 'Não fez' : 'N/A'))}
+        </button>
+      ))}
+    </div>
+  );
 
   // Render status badge for header
   const getHeaderBadgeClass = () => {
@@ -313,15 +347,33 @@ export default function DetailModal({ evaluation, onClose, onEdit }: DetailModal
 
               {/* Checklist Items list */}
               <div className="space-y-2 pt-1">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                  Respostas do Checklist ({activeItems.length} itens)
-                </h4>
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                    Respostas do Checklist ({activeItems.length} itens)
+                  </h4>
+
+                  {/* Filters: All | Fez | Não fez | N/A */}
+                  <div className="flex items-center gap-2">
+                    <FilterButtons />
+                  </div>
+                </div>
+
+                {activeItems.filter(item => getResponseForItem(item.id) === undefined).length > 0 && (
+                  <div className="bg-amber-50 border-l-4 border-amber-300 p-3 rounded text-[12px] text-amber-800">
+                    Inconsistência de dados detectada nesta avaliação.
+                  </div>
+                )}
 
                 <div className="border border-slate-100 rounded-2xl overflow-hidden divide-y divide-slate-100 bg-white">
                   {isGroupedChecklist ? (
                     activeGroups.map((g) => {
-                      const groupItems = activeItems.filter(item => item.id >= g.startId && item.id <= g.endId);
-                      const groupAnsweredCount = groupItems.filter(item => evaluation.checklistResponses?.[item.id] !== undefined).length;
+                      const groupItems = activeItems.filter(item => item.grupo === g.nome);
+
+                      // Counts for group (only count explicit responses)
+                      const groupFez = groupItems.filter(item => getResponseForItem(item.id) === 'Fez').length;
+                      const groupNao = groupItems.filter(item => getResponseForItem(item.id) === 'NaoFez').length;
+                      const groupNA = groupItems.filter(item => getResponseForItem(item.id) === 'NA').length;
+                      const groupTotal = groupItems.length;
 
                       return (
                         <div key={g.id} className="divide-y divide-slate-100">
@@ -329,108 +381,132 @@ export default function DetailModal({ evaluation, onClose, onEdit }: DetailModal
                           <div className="bg-slate-50/70 px-4 py-2.5 text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center justify-between border-b border-slate-100">
                             <span>{g.nome}</span>
                             <span className="bg-slate-200/60 text-slate-600 px-2 py-0.5 rounded-full text-[9px]">
-                              {groupAnsweredCount} de {g.total} itens
+                              {groupFez} Fez | {groupNao} Não fez | {groupNA} N/A | {groupTotal} itens
                             </span>
                           </div>
 
-                          {groupItems.map((item) => {
-                            const response = evaluation.checklistResponses?.[item.id];
-                            const isCritical = item.critico;
+                          {groupItems
+                            .filter(item => {
+                              const r = getResponseForItem(item.id);
+                              if (filter === 'All') return true;
+                              if (filter === 'Fez') return r === 'Fez';
+                              if (filter === 'NaoFez') return r === 'NaoFez';
+                              if (filter === 'NA') return r === 'NA';
+                              return true;
+                            })
+                            .map((item) => {
+                              const response = getResponseForItem(item.id);
+                              const isCritical = item.critico === true;
 
-                            // Response formatting helpers
-                            let badgeClass = 'bg-slate-100 text-slate-500 border-slate-200';
-                            let badgeText = 'Sem Resposta';
-                            if (response === 'Fez') {
-                              badgeClass = 'bg-emerald-50 text-emerald-700 border-emerald-100 font-extrabold';
-                              badgeText = 'Fez';
-                            } else if (response === 'NaoFez') {
-                              badgeClass = 'bg-red-50 text-red-700 border-red-100 font-extrabold';
-                              badgeText = 'Não fez';
-                            } else if (response === 'NA') {
-                              badgeClass = 'bg-slate-50 text-slate-600 border-slate-100';
-                              badgeText = 'N/A';
-                            }
+                              // Response formatting helpers
+                              let badgeClass = 'bg-slate-100 text-slate-500 border-slate-200';
+                              let badgeText = 'Inconsistente';
+                              if (response === 'Fez') {
+                                badgeClass = 'bg-emerald-50 text-emerald-700 border-emerald-100 font-extrabold';
+                                badgeText = 'Fez';
+                              } else if (response === 'NaoFez') {
+                                badgeClass = 'bg-red-50 text-red-700 border-red-100 font-extrabold';
+                                badgeText = 'Não fez';
+                              } else if (response === 'NA') {
+                                badgeClass = 'bg-slate-50 text-slate-600 border-slate-100';
+                                badgeText = 'N/A';
+                              } else {
+                                badgeClass = 'bg-amber-50 text-amber-800 border-amber-100 font-medium';
+                                badgeText = 'Inconsistente';
+                              }
 
-                            return (
-                              <div key={item.id} className={`p-3.5 flex items-start gap-4 justify-between transition-colors border-l-4 ${
-                                isCritical 
-                                  ? 'border-l-claro-red bg-red-50/5 hover:bg-red-50/10' 
-                                  : 'border-l-transparent hover:bg-slate-50/50'
-                              }`}>
-                                <div className="space-y-1 max-w-[75%]">
-                                  <div className="flex items-center gap-1.5 flex-wrap">
-                                    <span className="text-[10px] font-black text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">
-                                      #{item.id}
-                                    </span>
-                                    {isCritical && (
-                                      <span className="inline-flex items-center gap-0.5 text-[9px] font-black text-claro-red bg-red-50 border border-red-100 px-1.5 py-0.5 rounded uppercase">
-                                        <AlertTriangle size={8} className="fill-claro-red text-white" />
-                                        ITEM CRÍTICO
+                              return (
+                                <div key={item.id} className={`p-3.5 flex items-start gap-4 justify-between transition-colors border-l-4 ${
+                                  isCritical 
+                                    ? 'border-l-claro-red bg-red-50/5 hover:bg-red-50/10' 
+                                    : 'border-l-transparent hover:bg-slate-50/50'
+                                }`}>
+                                  <div className="space-y-1 max-w-[75%]">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className="text-[10px] font-black text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">
+                                        #{item.id}
                                       </span>
-                                    )}
+                                      {isCritical && (
+                                        <span className="inline-flex items-center gap-0.5 text-[9px] font-black text-claro-red bg-red-50 border border-red-100 px-1.5 py-0.5 rounded uppercase">
+                                          <AlertTriangle size={8} className="fill-claro-red text-white" />
+                                          ITEM CRÍTICO
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p className="text-xs text-slate-800 font-bold leading-normal">
+                                      {item.descricao}
+                                    </p>
                                   </div>
-                                  <p className="text-xs text-slate-800 font-bold leading-normal">
-                                    {item.pergunta}
-                                  </p>
-                                </div>
 
-                                <span className={`px-2.5 py-1 rounded-lg text-xs border self-start ${badgeClass}`}>
-                                  {badgeText}
-                                </span>
-                              </div>
-                            );
-                          })}
+                                  <span className={`px-2.5 py-1 rounded-lg text-xs border self-start ${badgeClass}`}>
+                                    {badgeText}
+                                  </span>
+                                </div>
+                              );
+                            })}
                         </div>
                       );
                     })
                   ) : (
-                    activeItems.map((item) => {
-                      const response = evaluation.checklistResponses?.[item.id];
-                      const isCritical = item.critico;
+                    activeItems
+                      .filter(item => {
+                        const r = getResponseForItem(item.id);
+                        if (filter === 'All') return true;
+                        if (filter === 'Fez') return r === 'Fez';
+                        if (filter === 'NaoFez') return r === 'NaoFez';
+                        if (filter === 'NA') return r === 'NA';
+                        return true;
+                      })
+                      .map((item) => {
+                        const response = getResponseForItem(item.id);
+                        const isCritical = item.critico === true;
 
-                      // Response formatting helpers
-                      let badgeClass = 'bg-slate-100 text-slate-500 border-slate-200';
-                      let badgeText = 'Sem Resposta';
-                      if (response === 'Fez') {
-                        badgeClass = 'bg-emerald-50 text-emerald-700 border-emerald-100 font-extrabold';
-                        badgeText = 'Fez';
-                      } else if (response === 'NaoFez') {
-                        badgeClass = 'bg-red-50 text-red-700 border-red-100 font-extrabold';
-                        badgeText = 'Não fez';
-                      } else if (response === 'NA') {
-                        badgeClass = 'bg-slate-50 text-slate-600 border-slate-100';
-                        badgeText = 'N/A';
-                      }
+                        // Response formatting helpers
+                        let badgeClass = 'bg-slate-100 text-slate-500 border-slate-200';
+                        let badgeText = 'Inconsistente';
+                        if (response === 'Fez') {
+                          badgeClass = 'bg-emerald-50 text-emerald-700 border-emerald-100 font-extrabold';
+                          badgeText = 'Fez';
+                        } else if (response === 'NaoFez') {
+                          badgeClass = 'bg-red-50 text-red-700 border-red-100 font-extrabold';
+                          badgeText = 'Não fez';
+                        } else if (response === 'NA') {
+                          badgeClass = 'bg-slate-50 text-slate-600 border-slate-100';
+                          badgeText = 'N/A';
+                        } else {
+                          badgeClass = 'bg-amber-50 text-amber-800 border-amber-100 font-medium';
+                          badgeText = 'Inconsistente';
+                        }
 
-                      return (
-                        <div key={item.id} className={`p-3.5 flex items-start gap-4 justify-between transition-colors border-l-4 ${
-                          isCritical 
-                            ? 'border-l-claro-red bg-red-50/5 hover:bg-red-50/10' 
-                            : 'border-l-transparent hover:bg-slate-50/50'
-                        }`}>
-                          <div className="space-y-1 max-w-[75%]">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="text-[10px] font-black text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">
-                                #{item.id}
-                              </span>
-                              {isCritical && (
-                                <span className="inline-flex items-center gap-0.5 text-[9px] font-black text-claro-red bg-red-50 border border-red-100 px-1.5 py-0.5 rounded uppercase">
-                                  <AlertTriangle size={8} className="fill-claro-red text-white" />
-                                  ITEM CRÍTICO
+                        return (
+                          <div key={item.id} className={`p-3.5 flex items-start gap-4 justify-between transition-colors border-l-4 ${
+                            isCritical 
+                              ? 'border-l-claro-red bg-red-50/5 hover:bg-red-50/10' 
+                              : 'border-l-transparent hover:bg-slate-50/50'
+                          }`}>
+                            <div className="space-y-1 max-w-[75%]">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-[10px] font-black text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">
+                                  #{item.id}
                                 </span>
-                              )}
+                                {isCritical && (
+                                  <span className="inline-flex items-center gap-0.5 text-[9px] font-black text-claro-red bg-red-50 border border-red-100 px-1.5 py-0.5 rounded uppercase">
+                                    <AlertTriangle size={8} className="fill-claro-red text-white" />
+                                    ITEM CRÍTICO
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-slate-800 font-bold leading-normal">
+                                {item.descricao}
+                              </p>
                             </div>
-                            <p className="text-xs text-slate-800 font-bold leading-normal">
-                              {item.pergunta}
-                            </p>
-                          </div>
 
-                          <span className={`px-2.5 py-1 rounded-lg text-xs border self-start ${badgeClass}`}>
-                            {badgeText}
-                          </span>
-                        </div>
-                      );
-                    })
+                            <span className={`px-2.5 py-1 rounded-lg text-xs border self-start ${badgeClass}`}>
+                              {badgeText}
+                            </span>
+                          </div>
+                        );
+                      })
                   )}
                 </div>
               </div>
