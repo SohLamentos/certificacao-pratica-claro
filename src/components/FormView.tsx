@@ -2009,39 +2009,11 @@ export default function FormView({ onSave, onCancel, initialData, profile }: For
                     )}
                   </div>
 
-                  {/* Step 3 Actions (Fixed bottom panel) */}
-                  <div className="flex flex-col gap-2 pt-2 border-t border-slate-100 shrink-0 bg-slate-50/80 backdrop-blur-sm z-10">
-                    <div className="flex items-center gap-2">
-                      {profile === 'cq' ? (
-                        <button
-                          type="button"
-                          onClick={onCancel}
-                          className="flex-1 py-2 border border-slate-300 bg-white hover:bg-slate-50 active:bg-slate-100 text-slate-700 font-bold rounded-xl text-xs transition-all shadow-sm text-center cursor-pointer"
-                        >
-                          Sair
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => setStep(2)}
-                          className="flex-1 py-2 border border-slate-300 bg-white hover:bg-slate-50 active:bg-slate-100 text-slate-700 font-bold rounded-xl text-xs transition-all shadow-sm text-center cursor-pointer"
-                        >
-                          Voltar
-                        </button>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={() => handleFinalSave('EM_ANDAMENTO')}
-                        className="flex-1 py-2 flex items-center justify-center space-x-1 border border-amber-300 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white font-extrabold rounded-xl text-xs transition-all shadow-sm cursor-pointer"
-                      >
-                        <FileText size={14} />
-                        <span>{profile === 'cq' ? 'Salvar em Andamento' : 'Salvar Rascunho'}</span>
-                      </button>
-                    </div>
-
+                  {/* Step 3 Actions (Fixed bottom panel) - responsive sticky footer */}
+                  <div className="sticky bottom-0 z-40 bg-slate-50/80 backdrop-blur-sm pt-2 border-t border-slate-100" style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}>
+                    {/* Alert (keeps above the action buttons to avoid forcing wrap) */}
                     {hasUnanswered && (
-                      <div className="bg-amber-50 border border-amber-200 p-3 rounded-xl flex items-start space-x-2 text-amber-800 text-xs shadow-sm animate-fade-in" id="unanswered-items-alert">
+                      <div className="mx-2 mb-2 bg-amber-50 border border-amber-200 p-3 rounded-xl flex items-start space-x-2 text-amber-800 text-xs shadow-sm animate-fade-in" id="unanswered-items-alert">
                         <AlertTriangle size={15} className="text-amber-600 shrink-0 mt-0.5" />
                         <div className="space-y-0.5">
                           <strong className="font-extrabold block">Existem itens sem resposta. Responda todos os itens antes de concluir.</strong>
@@ -2052,20 +2024,60 @@ export default function FormView({ onSave, onCancel, initialData, profile }: For
                       </div>
                     )}
 
-                    <button
-                      type="button"
-                      onClick={handleNextStep3}
-                      disabled={hasUnanswered}
-                      className={`w-full py-2.5 font-extrabold rounded-xl text-xs transition-all duration-150 shadow-md flex items-center justify-center space-x-1.5 ${
-                        hasUnanswered
-                          ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed shadow-none'
-                          : 'bg-slate-900 hover:bg-neutral-800 active:bg-neutral-950 text-white cursor-pointer'
-                      }`}
-                      id="btn-conclude-checklist"
-                    >
-                      <span>Concluir Checklist e Ver Diagnóstico</span>
-                      <ArrowRight size={14} />
-                    </button>
+                    {/* Buttons grid: 2 columns on mobile, 3 columns on desktop with specified minmax widths */}
+                    <div className="mx-2 grid grid-cols-2 gap-2 items-stretch md:grid-cols-[minmax(140px,1fr)_minmax(220px,1.4fr)_minmax(280px,1.6fr)]">
+                      {/* First action */}
+                      <div>
+                        {profile === 'cq' ? (
+                          <button
+                            type="button"
+                            onClick={onCancel}
+                            className="w-full min-h-[44px] py-2 border border-slate-300 bg-white hover:bg-slate-50 active:bg-slate-100 text-slate-700 font-bold rounded-xl text-xs transition-all shadow-sm text-center cursor-pointer whitespace-normal"
+                          >
+                            Sair
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setStep(2)}
+                            className="w-full min-h-[44px] py-2 border border-slate-300 bg-white hover:bg-slate-50 active:bg-slate-100 text-slate-700 font-bold rounded-xl text-xs transition-all shadow-sm text-center cursor-pointer whitespace-normal"
+                          >
+                            Voltar
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Second action */}
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => handleFinalSave('EM_ANDAMENTO')}
+                          className="w-full min-h-[44px] py-2 flex items-center justify-center space-x-1 border border-amber-300 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white font-extrabold rounded-xl text-xs transition-all shadow-sm cursor-pointer whitespace-normal"
+                        >
+                          <FileText size={14} />
+                          <span>{profile === 'cq' ? 'Salvar em Andamento' : 'Salvar Rascunho'}</span>
+                        </button>
+                      </div>
+
+                      {/* Conclude action: spans both columns on mobile, single column on md+ */}
+                      <div className="col-span-2 md:col-auto">
+                        <button
+                          type="button"
+                          onClick={handleNextStep3}
+                          disabled={hasUnanswered}
+                          className={`w-full min-h-[44px] py-2.5 font-extrabold rounded-xl text-xs transition-all duration-150 shadow-md flex items-center justify-center space-x-1.5 ${
+                            hasUnanswered
+                              ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed shadow-none'
+                              : 'bg-slate-900 hover:bg-neutral-800 active:bg-neutral-950 text-white cursor-pointer'
+                          } whitespace-normal`}
+                          id="btn-conclude-checklist"
+                        >
+                          <span>Concluir Checklist e Ver Diagnóstico</span>
+                          <ArrowRight size={14} />
+                        </button>
+                      </div>
+                    </div>
+
                   </div>
                 </>
               )}
