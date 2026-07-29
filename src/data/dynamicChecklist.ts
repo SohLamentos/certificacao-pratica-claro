@@ -84,10 +84,10 @@ const defaultGponCapacitacaoRaw = [
   { id: 133, pergunta: 'Realizou teste de velocidade?', critico: false, grupo: 'Banda Larga' },
   { id: 134, pergunta: 'Verificou os níveis TX e RX pela ONT ou niveis.virtua.com.br?', critico: false, grupo: 'Banda Larga' },
   { id: 135, pergunta: 'Realizou teste de velocidade e cobertura Wi-Fi junto ao cliente?', critico: false, grupo: 'Banda Larga' },
-  { id: 36, pergunta: 'Confecção dos conectores RJ11 está correta?', critico: false, grupo: 'Telefone' },
-  { id: 37, pergunta: 'Explicou Claro Fone, Serviços Inteligentes e Portabilidade?', critico: false, grupo: 'Telefone' },
-  { id: 38, pergunta: 'Confirmou o funcionamento do Claro Fone informando o número?', critico: false, grupo: 'Telefone' },
-  { id: 139, pergunta: 'Confirmou que o firmware está atualizado?', critico: 'Aplicativos' }, // Wait, let's fix critico to false, group to Aplicativos
+  { id: 136, pergunta: 'Confecção dos conectores RJ11 está correta?', critico: false, grupo: 'Telefone' },
+  { id: 137, pergunta: 'Explicou Claro Fone, Serviços Inteligentes e Portabilidade?', critico: false, grupo: 'Telefone' },
+  { id: 138, pergunta: 'Confirmou o funcionamento do Claro Fone informando o número?', critico: false, grupo: 'Telefone' },
+  { id: 139, pergunta: 'Confirmou que o firmware está atualizado?', critico: false, grupo: 'Aplicativos' },
   { id: 140, pergunta: 'Solicitou documento e realizou upload na OS Digital?', critico: false, grupo: 'Aplicativos' },
   { id: 141, pergunta: 'Preencheu corretamente a Ordem de Serviço Digital e coletou assinatura?', critico: false, grupo: 'Aplicativos' },
   { id: 142, pergunta: 'Finalizou o atendimento no PDA e lançou os materiais utilizados?', critico: false, grupo: 'Aplicativos' },
@@ -186,11 +186,39 @@ export const getDynamicChecklistItems = (): DynamicChecklistItem[] => {
   if (cachedChecklistItems) return cachedChecklistItems;
   const saved = localStorage.getItem('claro_dynamic_checklist_items');
   if (saved) {
-    try {
-      return JSON.parse(saved);
-    } catch (e) {
-      console.error('Error parsing dynamic checklist items', e);
-    }
+   try {
+     const parsed = JSON.parse(saved) as DynamicChecklistItem[];
+
+     // Normalization for legacy GPON Capacitação IDs (36/37/38 -> 136/137/138)
+     const legacyToNew: Record<number, number> = { 36: 136, 37: 137, 38: 138 };
+
+     // Clone parsed to avoid mutating localStorage data
+     const normalized = parsed.map(item => ({ ...item }));
+
+     // Build set of existing IDs to avoid collisions
+     const existingIds = new Set<number>(normalized.map(i => i.id));
+
+     for (const it of normalized) {
+       if (it.certificacao === 'GPON Capacitação' && legacyToNew[it.id]) {
+         const newId = legacyToNew[it.id];
+         if (!existingIds.has(newId)) {
+           // Apply normalization in-memory only
+           existingIds.delete(it.id);
+           it.id = newId;
+           existingIds.add(newId);
+           console.warn(`Normalized legacy checklist item id ${Object.keys(legacyToNew).find(k => Number(k) === newId) || ''} -> ${newId}`);
+         } else {
+           // If new ID exists, keep legacy id to avoid duplication
+           console.warn(`Legacy checklist id ${it.id} found but new id ${legacyToNew[it.id]} already exists; keeping legacy id to avoid collision.`);
+         }
+       }
+     }
+
+     cachedChecklistItems = normalized;
+     return normalized;
+   } catch (e) {
+     console.error('Error parsing dynamic checklist items', e);
+   }
   }
 
   // Combine static items into dynamic items
