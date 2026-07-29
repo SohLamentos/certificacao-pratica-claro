@@ -198,6 +198,8 @@ export const getDynamicChecklistItems = (): DynamicChecklistItem[] => {
      // Build set of existing IDs to avoid collisions
      const existingIds = new Set<number>(normalized.map(i => i.id));
 
+     let normalizationOccurred = false;
+     let collisionOccurred = false;
      for (const it of normalized) {
        if (it.certificacao === 'GPON Capacitação' && legacyToNew[it.id]) {
          const newId = legacyToNew[it.id];
@@ -206,12 +208,16 @@ export const getDynamicChecklistItems = (): DynamicChecklistItem[] => {
            existingIds.delete(it.id);
            it.id = newId;
            existingIds.add(newId);
-           console.warn(`Normalized legacy checklist item id ${Object.keys(legacyToNew).find(k => Number(k) === newId) || ''} -> ${newId}`);
+           normalizationOccurred = true;
          } else {
            // If new ID exists, keep legacy id to avoid duplication
-           console.warn(`Legacy checklist id ${it.id} found but new id ${legacyToNew[it.id]} already exists; keeping legacy id to avoid collision.`);
+           collisionOccurred = true;
          }
        }
+     }
+
+     if (normalizationOccurred || collisionOccurred) {
+       console.warn('Legacy checklist items detected in localStorage. Some IDs were normalized in-memory or collisions were found. Review stored dynamic checklist items if necessary.');
      }
 
      cachedChecklistItems = normalized;
