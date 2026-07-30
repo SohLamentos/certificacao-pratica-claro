@@ -14,6 +14,120 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       }, 400);
     }
 
+    if (request.method === 'GET') {
+  const evaluationRow = await EvaluationRepository.getById(env.DB, id);
+
+  if (!evaluationRow) {
+    return jsonResponse({
+      success: false,
+      error: 'Avaliação não encontrada',
+      message: `Não foi encontrada uma avaliação com o ID ${id}.`
+    }, 404);
+  }
+
+  const responseRows =
+    await EvaluationRepository.getChecklistResponses(env.DB, id);
+
+  const checklistResponses: Record<string, string> = {};
+
+  for (const row of responseRows) {
+    if (
+      row.item_id !== undefined &&
+      row.item_id !== null &&
+      row.resposta !== undefined &&
+      row.resposta !== null
+    ) {
+      checklistResponses[String(row.item_id)] = String(row.resposta);
+    }
+  }
+
+  let resultado = null;
+
+  try {
+    if (evaluationRow.resultado) {
+      resultado =
+        typeof evaluationRow.resultado === 'string'
+          ? JSON.parse(evaluationRow.resultado)
+          : evaluationRow.resultado;
+    }
+  } catch (error) {
+    console.error(
+      `Erro ao interpretar o resultado da avaliação ${id}:`,
+      error
+    );
+  }
+
+  const notaTeorica =
+    evaluationRow.nota_teorica !== null &&
+    evaluationRow.nota_teorica !== undefined
+      ? Number(evaluationRow.nota_teorica)
+      : undefined;
+
+  const mappedEvaluation = {
+    id: String(evaluationRow.id),
+    nomeTecnico: evaluationRow.nome_tecnico,
+    matricula: evaluationRow.matricula,
+    empresa: evaluationRow.empresa,
+    cidadeBase: evaluationRow.cidade_base,
+    nomeCQ: evaluationRow.nome_cq,
+
+    avaliadorId:
+      evaluationRow.avaliador_id !== null &&
+      evaluationRow.avaliador_id !== undefined
+        ? String(evaluationRow.avaliador_id)
+        : undefined,
+
+    data: evaluationRow.data,
+    tipoCertificacao:
+      evaluationRow.certificacao_nome ||
+      String(evaluationRow.certificacao_id),
+
+    status: evaluationRow.status,
+
+    checklistResponses,
+
+    resultado,
+    observacao: evaluationRow.observacao || '',
+
+    notaTeorica,
+
+    notaPratica:
+      evaluationRow.nota_pratica !== null &&
+      evaluationRow.nota_pratica !== undefined
+        ? Number(evaluationRow.nota_pratica)
+        : undefined,
+
+    modoCertificacao:
+      evaluationRow.modo_certificacao || 'TRADICIONAL',
+
+    praticaLiberada:
+      notaTeorica !== undefined &&
+      Number.isFinite(notaTeorica) &&
+      notaTeorica >= 7,
+
+    iaStatusConsolidado:
+      evaluationRow.ia_status_consolidado || 'NAO_SOLICITADA',
+
+    iaResultadoConsolidadoJson:
+      evaluationRow.ia_resultado_consolidado_json || null,
+
+    iaFingerprintConsolidada:
+      evaluationRow.ia_fingerprint_consolidada || null,
+
+    iaReanalisePendente:
+      evaluationRow.ia_reanalise_pendente || 0,
+
+    createdAt: evaluationRow.created_at,
+    updatedAt: evaluationRow.updated_at
+  };
+
+  return jsonResponse({
+    success: true,
+    data: mappedEvaluation,
+    evaluation: mappedEvaluation
+  });
+}
+
     if (request.method === 'PUT') {
       const data = await request.json() as any;
       const updatedRow = await EvaluationService.createOrUpdate(env.DB, { ...data, id });
