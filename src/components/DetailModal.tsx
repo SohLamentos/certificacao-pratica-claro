@@ -61,28 +61,61 @@ export default function DetailModal({ evaluation, onClose, onEdit }: DetailModal
   const isGroupedChecklist = activeGroups.length > 0;
   const hasResults = evaluation.resultado !== undefined;
 
-  // Legacy ID compatibility (read-only mapping for old GPON Capacitação IDs)
-  const legacyIdMap: Record<number, number> = { 136: 36, 137: 37, 138: 38 };
-  const legacyUsedRef = React.useRef(false);
-  const getResponseForItem = (id: number) => {
-    const anyEval: any = evaluation as any;
-    if (anyEval.checklistResponses && Object.prototype.hasOwnProperty.call(anyEval.checklistResponses, id)) {
-      return anyEval.checklistResponses[id];
+  // Local state for filter used in the UI. Kept minimal so TypeScript compiles and behavior unchanged (default: All)
+  const [filter] = React.useState<'All' | 'Fez' | 'NaoFez' | 'NA'>('All');
+
+  // Response resolver with full read-only fallback for legacy IDs.
+  // Order of lookup:
+  // 1) direct current ID (numeric or string key)
+  // 2) legacy ID mapping based on certification type (GPON: -100, HFC: -200)
+  // 3) undefined -> treated as Inconsistente by caller
+
+  const readResponse = (responses: any, id: number) => {
+    if (!responses) return undefined;
+    // check numeric key
+    if (Object.prototype.hasOwnProperty.call(responses, id)) {
+      const v = responses[id];
+      if (v !== undefined && v !== null) return v;
     }
-    const legacy = legacyIdMap[id];
-    if (legacy && anyEval.checklistResponses && Object.prototype.hasOwnProperty.call(anyEval.checklistResponses, legacy)) {
-      // Mark that a legacy mapping was used (log once per session via useEffect)
-      legacyUsedRef.current = true;
-      return anyEval.checklistResponses[legacy];
+    // check string key
+    const sKey = String(id);
+    if (Object.prototype.hasOwnProperty.call(responses, sKey)) {
+      const v = responses[sKey];
+      if (v !== undefined && v !== null) return v;
     }
     return undefined;
   };
 
-  React.useEffect(() => {
-    if (legacyUsedRef.current) {
-      console.warn('Legacy checklist responses detected and mapped (36/37/38 -> 136/137/138).');
+  const getResponseForItem = (id: number) => {
+    const anyEval: any = evaluation as any;
+    const responses = anyEval.checklistResponses || {};
+
+    // 1) direct lookup
+    const direct = readResponse(responses, id);
+    if (direct !== undefined) return direct;
+
+    // 2) determine legacy id based on certification
+    let legacyId: number | null = null;
+    if (evaluation.tipoCertificacao === 'GPON Capacitação') {
+      // current IDs: 101..146 -> legacy 1..46
+      if (id >= 101 && id <= 146) legacyId = id - 100;
+    } else if (evaluation.tipoCertificacao === 'HFC Capacitação') {
+      // current IDs: 201..250 -> legacy 1..50
+      if (id >= 201 && id <= 250) legacyId = id - 200;
+    } else {
+      // GPON Veterano and other certifications use their own IDs (no translation)
+      legacyId = null;
     }
-  }, []);
+
+    if (legacyId !== null) {
+      const legacyResp = readResponse(responses, legacyId);
+      if (legacyResp !== undefined) {
+        return legacyResp;
+      }
+    }
+
+    return undefined;
+  };
 
 
   // Render status badge for header
