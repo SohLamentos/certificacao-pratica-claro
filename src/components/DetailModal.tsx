@@ -70,21 +70,69 @@ export default function DetailModal({ evaluation, onClose, onEdit }: DetailModal
   // 2) legacy ID mapping based on certification type (GPON: -100, HFC: -200)
   // 3) undefined -> treated as Inconsistente by caller
 
-  const readResponse = (responses: any, id: number) => {
-    if (!responses) return undefined;
-    // check numeric key
-    if (Object.prototype.hasOwnProperty.call(responses, id)) {
-      const v = responses[id];
-      if (v !== undefined && v !== null) return v;
-    }
-    // check string key
-    const sKey = String(id);
-    if (Object.prototype.hasOwnProperty.call(responses, sKey)) {
-      const v = responses[sKey];
-      if (v !== undefined && v !== null) return v;
-    }
+  const readResponse = (
+  responses: unknown,
+  id: number
+): string | undefined => {
+  if (!responses) {
     return undefined;
-  };
+  }
+
+  let normalizedResponses: Record<string, unknown> = {};
+
+  if (typeof responses === 'string') {
+    try {
+      const parsed = JSON.parse(responses);
+
+      if (
+        parsed &&
+        typeof parsed === 'object' &&
+        !Array.isArray(parsed)
+      ) {
+        normalizedResponses =
+          parsed as Record<string, unknown>;
+      }
+    } catch (error) {
+      console.error(
+        'Não foi possível interpretar checklistResponses:',
+        error
+      );
+
+      return undefined;
+    }
+  } else if (Array.isArray(responses)) {
+    for (const row of responses) {
+      if (
+        row &&
+        typeof row === 'object' &&
+        'item_id' in row
+      ) {
+        const itemId = String(
+          (row as any).item_id
+        );
+
+        normalizedResponses[itemId] =
+          (row as any).resposta;
+      }
+    }
+  } else if (typeof responses === 'object') {
+    normalizedResponses =
+      responses as Record<string, unknown>;
+  }
+
+  const value =
+    normalizedResponses[String(id)];
+
+  if (
+    value === undefined ||
+    value === null ||
+    value === ''
+  ) {
+    return undefined;
+  }
+
+  return String(value);
+};
 
   const getResponseForItem = (id: number) => {
     const anyEval: any = evaluation as any;
