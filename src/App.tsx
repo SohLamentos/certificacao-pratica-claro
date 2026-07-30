@@ -306,11 +306,35 @@ export function AppContent() {
       setLoadingProfile(false);
     }
   };
-  const [evaluationsState, setEvaluationsState] = useState<Avaliacao[]>([]);
-  const evaluations = Array.isArray(evaluationsState) ? evaluationsState : [];
-  const setEvaluations = (val: any) => {
-    setEvaluationsState(Array.isArray(val) ? val : []);
-  };
+  const [evaluationsState, setEvaluationsState] =
+  useState<Avaliacao[]>([]);
+
+const evaluations =
+  Array.isArray(evaluationsState)
+    ? evaluationsState
+    : [];
+
+const setEvaluations = (
+  value:
+    | Avaliacao[]
+    | ((previous: Avaliacao[]) => Avaliacao[])
+) => {
+  setEvaluationsState(previous => {
+    const safePrevious =
+      Array.isArray(previous)
+        ? previous
+        : [];
+
+    const nextValue =
+      typeof value === 'function'
+        ? value(safePrevious)
+        : value;
+
+    return Array.isArray(nextValue)
+      ? nextValue
+      : [];
+  });
+};
 
   const [cqsState, setCqsState] = useState<CQ[]>([]);
   const cqs = Array.isArray(cqsState) ? cqsState : [];
@@ -484,9 +508,58 @@ export function AppContent() {
   };
 
   // Trigger viewing details modal
-  const handleOpenTrigger = (evaluation: Avaliacao) => {
-    setViewingEvaluation(evaluation);
-  };
+  const handleOpenTrigger = async (evaluation: Avaliacao) => {
+  try {
+    const response = await apiFetch(
+      `/api/avaliacoes/${encodeURIComponent(evaluation.id)}`,
+      {
+        method: 'GET',
+        headers: {
+          'Cache-Control': 'no-cache, no-store'
+        }
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `Falha ao carregar avaliação. HTTP ${response.status}`
+      );
+    }
+
+    const result = await response.json() as {
+      success?: boolean;
+      data?: Avaliacao;
+      evaluation?: Avaliacao;
+      message?: string;
+    };
+
+    const completeEvaluation =
+      result.data || result.evaluation;
+
+    if (!result.success || !completeEvaluation) {
+      throw new Error(
+        result.message || 'A API não retornou a avaliação completa.'
+      );
+    }
+
+    console.log(
+      '[Detalhes da avaliação] Respostas carregadas:',
+      Object.keys(completeEvaluation.checklistResponses || {}).length
+    );
+
+    setViewingEvaluation(completeEvaluation);
+  } catch (error) {
+    console.error(
+      'Erro ao carregar detalhes da avaliação:',
+      error
+    );
+
+    showToast(
+      'Não foi possível carregar as respostas desta avaliação.',
+      'error'
+    );
+  }
+};
 
   // Save changes (creates new or updates existing)
   const handleSaveEvaluation = async (
